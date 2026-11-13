@@ -280,6 +280,14 @@ function tryE(who) { send('play?u=' + who + '&e=' + $('te').value); }
 // ---------------- live data from the shoes ----------------
 // unit status CSV: btn,vbat,pct,ax,ay,az,gx,gy,gz,peakG,minA,maxA,temp,lvl,tilt,tiltY,tiltZ,steps,stepInt,ms,
 //                  sleeps,motionWakes,buttonWakes,secsToSleep (-1 = kept awake)
+const bad = {L: 0, R: 0}, badLen = {L: 0, R: 0};
+function valid(p, csv) {   // whole message only: 24 numbers, none missing (a cut-short message would read as zeros)
+  const f = csv.split(',');
+  if (f.length >= 24 && f.every(x => x !== '' && Number.isFinite(Number(x)))) return true;
+  if (!bad[p]) log(SIDES[p] + ': incomplete status message (' + csv.length + ' chars, ' + f.length + ' fields) - ignoring these');
+  bad[p]++; badLen[p] = csv.length;
+  return false;
+}
 function parse(csv) {
   const v = csv.split(',').map(Number);
   return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
@@ -319,7 +327,7 @@ function live(p, u) {        // awake data for one shoe
 let leftWasAsleep = false;
 function render(j) {
   if (!j.R) return;
-  live('R', parse(j.R));
+  if (valid('R', j.R)) live('R', parse(j.R));
   shoe.R.link = 'connected to this page';
   if (j.zz && shoe.R.state != 'asleep') {
     heard('R', 'asleep'); log('Right going to sleep'); $('st').textContent = 'Right going to sleep...';
@@ -328,8 +336,8 @@ function render(j) {
     return;
   }
   if (j.L && !j.zz) {
-    live('L', parse(j.L));
-    shoe.L.link = 'linked via right, last msg ' + j.La + ' ms ago';
+    if (valid('L', j.L)) live('L', parse(j.L));
+    shoe.L.link = 'linked via right, last msg ' + j.La + ' ms ago' + (bad.L ? ' \u00b7 ' + bad.L + ' incomplete (last ' + badLen.L + ' chars)' : '');
     if (leftWasAsleep) log('Left linked again');
   } else if (j.Lz >= 0) {
     if (shoe.L.state != 'asleep') { heard('L', 'asleep'); shoe.L.asleepSince = Date.now() - j.Lz * 1000; log('Left went to sleep'); }
