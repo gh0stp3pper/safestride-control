@@ -3,51 +3,80 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Safe Stride control</title>
 <!-- Safe Stride test page over Bluetooth (Web Bluetooth, Chrome on Android / desktop).
-     Talks to the right unit running firmware/stride_unit. Must be opened from https:// or http://localhost. -->
+     Talks to the right unit running firmware/stride_unit, and listens for both units' sleep beacons.
+     Must be opened from https:// or http://localhost. -->
 <style>
-body{font-family:sans-serif;margin:10px;background:#111;color:#eee;max-width:720px}
+body{font-family:sans-serif;margin:10px;background:#111;color:#eee;max-width:760px}
 pre{background:#000;border:1px solid #444;padding:8px;white-space:pre-wrap;font-size:12px}
 table{border-collapse:collapse}
 td,th{padding:4px 12px 4px 0;font-size:17px;text-align:left}
 th{color:#aaa;font-weight:normal}
 button,select,input{font-size:16px;padding:8px 10px;margin:4px 4px 0 0;background:#222;color:#eee;border:1px solid #555;border-radius:6px}
 input[type=number]{width:70px}
-.tabs button{padding:10px 18px}
+.tabs button{padding:10px 16px}
 .tabs .on{background:#2a5;border-color:#2a5;color:#000}
 #conn{background:#2a5;color:#000;border-color:#2a5;font-weight:bold}
 .box{border:1px solid #333;border-radius:8px;padding:8px 10px;margin:10px 0}
-.big{font-size:40px;font-weight:bold;text-align:center;padding:6px;border-radius:8px;transition:background .15s}
+.big{font-size:40px;font-weight:bold;text-align:center;padding:4px;border-radius:8px;transition:background .15s}
 .flash{background:#2a5}
 #st,.dim{color:#aaa}
 label{display:block;margin:6px 0;font-size:17px}
-.row{display:flex;gap:10px}.row>div{flex:1}
 .warn{color:#f55;font-weight:bold}
+/* shoe cards */
+.cards{display:flex;gap:10px;margin-top:10px}
+.card{flex:1;min-width:0;border:1px solid #333;border-radius:10px;padding:10px}
+.card h3{margin:0 0 6px;font-size:20px;display:flex;justify-content:space-between;align-items:center}
+.badge{font-size:13px;font-weight:bold;padding:3px 8px;border-radius:10px;background:#333;color:#aaa}
+.b-awake{background:#2a5;color:#000}.b-asleep{background:#246;color:#cde}.b-lost,.b-flat{background:#c33;color:#fff}
+.bat{font-size:30px;font-weight:bold}
+.line{font-size:15px;margin:3px 0;color:#ccc}
+.small{font-size:13px;color:#999}
+.controls label{display:inline-block;margin:6px 12px 0 0;font-size:15px}
 </style></head><body>
 
 <div class="tabs">
   <button id="conn" onclick="connect()">Connect</button>
-  <button id="t1" class="on" onclick="tab(1)">Walk</button><button id="t2" onclick="tab(2)">IMU</button>
-  <span id="st">not connected</span>
+  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button>
 </div>
+<div id="st" style="margin-top:6px">not connected</div>
 <div id="nobt" class="warn" style="display:none;margin-top:8px"></div>
 
+<!-- ============ Shoes ============ -->
 <div id="p1">
-<div class="box"><b>Shoes</b>
- <div id="hL" style="font-size:17px;margin:4px 0">Left: not heard yet</div>
- <div id="hR" style="font-size:17px;margin:4px 0">Right: not heard yet</div>
- <button onclick="startWatch()">Listen for sleeping shoes</button>
- <label class="dim" style="font-size:15px;display:inline"><input type="checkbox" id="wl"> keep screen on</label>
- <div class="dim" id="watchst"></div>
+<div class="cards">
+ <div class="card" id="cardL"><h3>Left <span class="badge" id="Lbadge">-</span></h3>
+  <div class="bat" id="Lbat">- V</div>
+  <div class="line" id="Lheard">not heard yet</div>
+  <div class="line" id="Lsleep"></div>
+  <div class="small" id="Lcounts"></div>
+  <div class="dim" style="margin-top:8px">Steps</div><div class="big" id="Lsteps">-</div><div class="small" id="Lint"></div>
+  <div class="small" id="Llink"></div>
+ </div>
+ <div class="card" id="cardR"><h3>Right <span class="badge" id="Rbadge">-</span></h3>
+  <div class="bat" id="Rbat">- V</div>
+  <div class="line" id="Rheard">not heard yet</div>
+  <div class="line" id="Rsleep"></div>
+  <div class="small" id="Rcounts"></div>
+  <div class="dim" style="margin-top:8px">Steps</div><div class="big" id="Rsteps">-</div><div class="small" id="Rint"></div>
+  <div class="small" id="Rlink"></div>
+ </div>
 </div>
-<div class="row">
- <div><div class="dim">Left steps</div><div class="big" id="Lsteps">-</div><div class="dim" id="Lint"></div></div>
- <div><div class="dim">Right steps</div><div class="big" id="Rsteps">-</div><div class="dim" id="Rint"></div></div>
-</div>
-<div class="dim" id="link"></div>
-<div class="dim" id="sleepL"></div><div class="dim" id="sleepR"></div>
-<label class="dim" style="font-size:15px"><input type="checkbox" id="ka"> Keep awake (don't sleep while I'm testing)</label>
-<div class="warn"><span id="Lbatw"></span> <span id="Rbatw"></span></div>
 
+<div class="box controls">
+ <button onclick="startWatch()" id="watchbtn">Listen for sleeping shoes</button>
+ <button onclick="if (confirm('Put both shoes to sleep? Move them or press a button to wake.')) send('sleep')">Sleep both now</button>
+ <button onclick="send('reset')">Reset steps</button><br>
+ <label><input type="checkbox" id="ka"> Keep shoes awake</label>
+ <label><input type="checkbox" id="wl"> Keep phone screen on</label>
+ <div class="small" id="watchst"></div>
+</div>
+
+<div class="box"><b>Log</b> <button onclick="logLines.length = 0; showLog()" style="font-size:13px;padding:4px 8px">clear</button>
+<pre id="log" style="max-height:260px;overflow:auto"></pre></div>
+</div>
+
+<!-- ============ Alerts ============ -->
+<div id="p2" style="display:none">
 <div class="box"><b>Mode</b>
 <label><input type="radio" name="mode" value="0"> Off</label>
 <label><input type="radio" name="mode" value="1"> Own step (each shoe buzzes when it lands)</label>
@@ -73,15 +102,12 @@ label{display:block;margin:6px 0;font-size:17px}
 <select id="te"></select><br>
 <button onclick="tryE('L')">Left</button><button onclick="tryE('R')">Right</button><button onclick="tryE('B')">Both</button>
 </div>
-<button onclick="send('reset')">Reset step counts</button>
-<div class="box"><b>Log</b> <button onclick="logLines.length = 0; showLog()" style="font-size:13px;padding:4px 8px">clear</button>
-<pre id="log" style="max-height:220px;overflow:auto"></pre></div>
 </div>
 
-<div id="p2" style="display:none">
+<!-- ============ IMU ============ -->
+<div id="p3" style="display:none">
 <table>
 <tr><th></th><th>Left</th><th>Right</th></tr>
-<tr><td>Battery</td><td id="Lbat"></td><td id="Rbat"></td></tr>
 <tr><td>Button</td><td id="Lbtn"></td><td id="Rbtn"></td></tr>
 <tr><td>|a|</td><td id="La"></td><td id="Ra"></td></tr>
 <tr><td class="dim">a x y z</td><td id="Laxyz" class="dim"></td><td id="Raxyz" class="dim"></td></tr>
@@ -95,9 +121,8 @@ label{display:block;margin:6px 0;font-size:17px}
 <tr><td>Uptime</td><td id="Lup"></td><td id="Rup"></td></tr>
 </table>
 <button onclick="send('led?u=L')">LED L</button><button onclick="send('led?u=R')">LED R</button><br>
-<button onclick="send('level?u=L')">Set level L</button><button onclick="send('level?u=R')">Set level R</button><button onclick="send('level?u=B')">Set level both</button><br>
-<button onclick="if (confirm('Put both shoes to sleep? Move them or press a button to wake.')) send('sleep')">Sleep both now</button>
-<div class="dim">Wi-Fi page: <span id="wifi">-</span> (hold the right button 5 s to toggle)</div>
+<button onclick="send('level?u=L')">Set level L</button><button onclick="send('level?u=R')">Set level R</button><button onclick="send('level?u=B')">Set level both</button>
+<div class="dim" style="margin-top:6px">Wi-Fi page: <span id="wifi">-</span> (hold the right button 5 s to toggle)</div>
 <pre id="chk"></pre>
 </div>
 
@@ -106,6 +131,7 @@ const $ = id => document.getElementById(id);
 const U = n => '5a4e00' + n + '-7b3c-4d2a-9f10-5afe57d1de00';
 const SVC = U('10'), UUIDS = {st: U('11'), cfg: U('12'), chk: U('13'), cmd: U('14')};
 const enc = new TextEncoder(), dec = new TextDecoder();
+const SIDES = {L: 'Left', R: 'Right'};
 
 // DRV2605L effect library (datasheet table 11.2) - a useful subset
 const EFFECTS = [[0,'none'],[1,'Strong click 100%'],[2,'Strong click 60%'],[3,'Strong click 30%'],[4,'Sharp click 100%'],
@@ -117,8 +143,7 @@ const EFFECTS = [[0,'none'],[1,'Strong click 100%'],[2,'Strong click 60%'],[3,'S
   if (id === 'te' && !n) return;
   const o = document.createElement('option'); o.value = n; o.textContent = n ? n + ' ' + t : t; $(id).appendChild(o);
 }));
-function tab(n) { $('p1').style.display = n == 1 ? '' : 'none'; $('p2').style.display = n == 2 ? '' : 'none';
-  $('t1').className = n == 1 ? 'on' : ''; $('t2').className = n == 2 ? 'on' : ''; }
+function tab(n) { [1, 2, 3].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
 
 if (!navigator.bluetooth) {
   $('nobt').style.display = '';
@@ -126,10 +151,62 @@ if (!navigator.bluetooth) {
     'On Linux you may need chrome://flags/#enable-experimental-web-platform-features turned on.';
 }
 
-// ---------------- Bluetooth ----------------
+// ---------------- helpers ----------------
+const logLines = [];
+const now = () => new Date().toLocaleTimeString();
+function log(t) { logLines.unshift(now() + '  ' + t); if (logLines.length > 300) logLines.pop(); showLog(); }
+function showLog() { $('log').textContent = logLines.join('\n'); }
+const mmss = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
+// battery % from the 11 Nov discharge curve (620 mAh cell) - same table as the firmware
+const PV = [3.32, 3.46, 3.57, 3.67, 3.70, 3.72, 3.78, 3.85, 3.93, 4.03, 4.12];
+function pct(v) { if (v <= PV[0]) return 0; for (let i = 1; i < 11; i++) if (v < PV[i]) return Math.round((i - 1 + (v - PV[i-1]) / (PV[i] - PV[i-1])) * 10); return 100; }
+
+// ---------------- shoe model: what we last knew about each shoe ----------------
+// state: 'awake' | 'asleep' | 'flat' ; t = when last heard (ms) ; asleepSince = ms
+const shoe = {
+  L: {state: null, t: null, v: null, asleepSince: null, ts: null, sl: 0, mw: 0, bw: 0, link: '', beaconEvery: 120, lost: false, check: -1},
+  R: {state: null, t: null, v: null, asleepSince: null, ts: null, sl: 0, mw: 0, bw: 0, link: '', beaconEvery: 120, lost: false, check: -1},
+};
+function heard(p, state, v) {
+  const s = shoe[p];
+  if (s.lost) { s.lost = false; log(SIDES[p] + ' heard again (' + state + ')'); }
+  if (state == 'asleep' && s.state != 'asleep' && !s.asleepSince) s.asleepSince = Date.now();
+  if (state == 'awake') s.asleepSince = null;
+  s.state = state; s.t = Date.now(); if (v) s.v = v;
+}
+function drawCard(p) {
+  const s = shoe[p], name = SIDES[p];
+  const age = s.t ? (Date.now() - s.t) / 1000 : null;
+  const lostAfter = s.beaconEvery * 2 + 60;                     // two missed beacons + margin
+  if (s.t && age > lostAfter && !s.lost) {
+    s.lost = true; log(name + ' LOST - nothing heard for ' + mmss(age));
+    if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]);
+  }
+  const state = !s.t ? null : s.lost ? 'lost' : s.state;
+  const b = $(p + 'badge');
+  b.textContent = state ? state.toUpperCase() : '-';
+  b.className = 'badge' + (state ? ' b-' + state : '');
+  $('card' + p).style.borderColor = s.lost ? '#c33' : '#333';
+  if (s.v) {
+    const low = s.v < 3.4, pc = pct(s.v);
+    $(p + 'bat').textContent = s.v.toFixed(2) + ' V  ' + pc + '%';
+    $(p + 'bat').style.color = low ? '#f55' : pc < 20 ? '#fa4' : '';
+  }
+  $(p + 'heard').textContent = !s.t ? 'not heard yet' : (s.lost ? 'LOST - ' : '') + 'heard ' + mmss(age) + ' ago';
+  $(p + 'heard').style.color = s.lost ? '#f55' : '';
+  $(p + 'sleep').textContent =
+    state == 'awake' ? (s.ts < 0 ? 'kept awake' : s.ts != null ? 'sleeps in ' + mmss(s.ts) + ' if still' : '') :
+    (state == 'asleep' || state == 'lost') && s.asleepSince ? 'asleep for ' + mmss((Date.now() - s.asleepSince) / 1000) :
+    state == 'flat' ? 'battery flat - shut down' : '';
+  $(p + 'counts').textContent = s.sl ? 'slept ' + s.sl + '× · woke on movement ' + s.mw + ', button ' + s.bw : '';
+  $(p + 'link').textContent = s.link;
+}
+setInterval(() => { drawCard('L'); drawCard('R'); }, 1000);
+
+// ---------------- Bluetooth: control link to the right shoe ----------------
 let dev = null, ch = {}, connected = false, gattQ = Promise.resolve();
-// Web Bluetooth allows one GATT operation at a time, so queue them
-function gatt(fn) { const p = gattQ.then(fn); gattQ = p.catch(() => {}); return p; }
+function gatt(fn) { const p = gattQ.then(fn); gattQ = p.catch(() => {}); return p; }   // one GATT operation at a time
 
 async function connect() {
   try {
@@ -149,16 +226,14 @@ async function openGatt() {
   $('chk').textContent = dec.decode(await ch.chk.readValue());
   connected = true;
   $('st').textContent = 'connected to ' + dev.name;
-  log(rightAsleepSince ? 'Right awake again, reconnected' : 'Connected');
-  rightAsleepSince = null;
+  log(shoe.R.state == 'asleep' ? 'Right awake again, reconnected' : 'Connected');
   $('conn').textContent = 'Reconnect';
   poll();
 }
 function onDisconnect() {
-  if (connected && !rightAsleepSince) log('Connection lost');
+  if (connected && shoe.R.state != 'asleep') log('Connection lost');
   connected = false;
-  $('st').textContent = rightAsleepSince ? 'Right asleep since ' + rightAsleepSince + ' - reconnects when it wakes'
-                                         : 'disconnected - retrying...';
+  $('st').textContent = shoe.R.state == 'asleep' ? 'Right asleep - reconnects when it wakes' : 'disconnected - retrying...';
   setTimeout(async () => { try { await openGatt(); } catch (e) { onDisconnect(); } }, 2000);
 }
 function send(text) {   // commands are short (< 20 bytes) so they fit any packet size
@@ -181,9 +256,10 @@ function loadCfg(c) {
 }
 document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => send('config?mode=' + e.value));
 ['se','sd','sl','side','ef','em','en','ea'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
+$('ka').onchange = () => send('awake?on=' + ($('ka').checked ? 1 : 0));
 function tryE(who) { send('play?u=' + who + '&e=' + $('te').value); }
 
-// ---------------- display ----------------
+// ---------------- live data from the shoes ----------------
 // unit status CSV: btn,vbat,pct,ax,ay,az,gx,gy,gz,peakG,minA,maxA,temp,lvl,tilt,tiltY,tiltZ,steps,stepInt,ms,
 //                  sleeps,motionWakes,buttonWakes,secsToSleep (-1 = kept awake)
 function parse(csv) {
@@ -192,90 +268,77 @@ function parse(csv) {
           t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19],
           sl: v[20], mw: v[21], bw: v[22], ts: v[23]};
 }
-const lastSteps = {L: null, R: null};
-function steps(p, n, intv) {
-  $(p + 'steps').textContent = n;
-  $(p + 'int').textContent = intv ? (intv / 1000).toFixed(2) + ' s since last' : '';
-  if (lastSteps[p] !== null && n > lastSteps[p]) { $(p + 'steps').classList.add('flash'); setTimeout(() => $(p + 'steps').classList.remove('flash'), 200); }
-  lastSteps[p] = n;
-}
-function fill(p, s) {
-  $(p+'btn').textContent = s.btn ? 'PRESSED' : 'up';
-  const low = s.vbat < 3.4;
-  $(p+'bat').textContent = s.vbat.toFixed(2) + ' V (' + s.pct + '%)' + (low ? ' LOW' : '');
-  $(p+'bat').style.color = low ? '#f55' : '';
-  $(p+'batw').textContent = low ? (p == 'L' ? 'Left' : 'Right') + ' battery low: ' + s.vbat.toFixed(2) + ' V' : '';
-  const [ax, ay, az] = s.a, [gx, gy, gz] = s.g;
+const lastSteps = {L: null, R: null}, prev = {L: null, R: null};
+function live(p, u) {        // awake data for one shoe
+  const s = shoe[p], q = prev[p];
+  if (q) {                   // log wake-ups by watching the counters
+    if (u.mw > q.mw) log(SIDES[p] + ' woke on movement');
+    if (u.bw > q.bw) log(SIDES[p] + ' woke on button');
+    if (u.ms < q.ms && u.mw == q.mw && u.bw == q.bw) log(SIDES[p] + ' restarted');
+  }
+  prev[p] = u;
+  heard(p, 'awake', u.vbat);
+  s.ts = u.ts; s.sl = u.sl; s.mw = u.mw; s.bw = u.bw;
+  // steps
+  $(p + 'steps').textContent = u.steps;
+  $(p + 'int').textContent = u.si ? (u.si / 1000).toFixed(2) + ' s between steps' : '';
+  if (lastSteps[p] !== null && u.steps > lastSteps[p]) { $(p + 'steps').classList.add('flash'); setTimeout(() => $(p + 'steps').classList.remove('flash'), 200); }
+  lastSteps[p] = u.steps;
+  // IMU tab
+  const [ax, ay, az] = u.a, [gx, gy, gz] = u.g;
+  $(p+'btn').textContent = u.btn ? 'PRESSED' : 'up';
   $(p+'a').textContent = Math.hypot(ax, ay, az).toFixed(3) + ' g';
-  $(p+'axyz').textContent = s.a.map(v => v.toFixed(2)).join('  ');
-  $(p+'arng').textContent = s.mna.toFixed(2) + ' to ' + s.mxa.toFixed(2) + ' g';
-  $(p+'tl').textContent = s.lv ? s.tl + '°' : 'not set';
-  $(p+'tyz').textContent = s.lv ? s.ty + '° / ' + s.tz + '°' : '-';
+  $(p+'axyz').textContent = u.a.map(v => v.toFixed(2)).join('  ');
+  $(p+'arng').textContent = u.mna.toFixed(2) + ' to ' + u.mxa.toFixed(2) + ' g';
+  $(p+'tl').textContent = u.lv ? u.tl + '°' : 'not set';
+  $(p+'tyz').textContent = u.lv ? u.ty + '° / ' + u.tz + '°' : '-';
   $(p+'g').textContent = Math.hypot(gx, gy, gz).toFixed(0) + ' °/s';
-  $(p+'gxyz').textContent = s.g.map(v => v.toFixed(0)).join('  ');
-  $(p+'pg').textContent = s.pg + ' °/s';
-  $(p+'t').textContent = s.t.toFixed(1) + ' °C';
-  $(p+'up').textContent = Math.round(s.ms / 1000) + ' s';
-  steps(p, s.steps, s.si);
+  $(p+'gxyz').textContent = u.g.map(v => v.toFixed(0)).join('  ');
+  $(p+'pg').textContent = u.pg + ' °/s';
+  $(p+'t').textContent = u.t.toFixed(1) + ' °C';
+  $(p+'up').textContent = mmss(u.ms / 1000);
 }
-// ---------------- sleep monitoring + log ----------------
-const logLines = [];
-const now = () => new Date().toLocaleTimeString();
-function log(t) { logLines.unshift(now() + '  ' + t); if (logLines.length > 200) logLines.pop(); showLog(); }
-function showLog() { $('log').textContent = logLines.join('\n'); }
-const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
-function sleepText(name, s) {
-  const counts = s.sl ? ' \u00b7 slept ' + s.sl + '\u00d7 (woke on movement ' + s.mw + ', button ' + s.bw + ')' : '';
-  return name + ': awake, ' + (s.ts < 0 ? 'kept awake' : 'sleeps in ' + mmss(Math.max(0, s.ts)) + ' if still') + counts;
-}
-const prev = {Left: null, Right: null};
-function wakeCheck(name, s) {   // log wake-ups by watching the counters
-  const p = prev[name];
-  if (p) {
-    if (s.mw > p.mw) log(name + ' woke on movement');
-    if (s.bw > p.bw) log(name + ' woke on button');
-    if (s.ms < p.ms && s.mw == p.mw && s.bw == p.bw) log(name + ' restarted');
+let leftWasAsleep = false;
+function render(j) {
+  if (!j.R) return;
+  live('R', parse(j.R));
+  shoe.R.link = 'connected to this page';
+  if (j.zz && shoe.R.state != 'asleep') { heard('R', 'asleep'); log('Right going to sleep'); $('st').textContent = 'Right going to sleep...'; }
+  if (j.L) {
+    live('L', parse(j.L));
+    shoe.L.link = 'linked via right, last msg ' + j.La + ' ms ago';
+    if (leftWasAsleep) log('Left linked again');
+  } else if (j.Lz >= 0) {
+    if (shoe.L.state != 'asleep') { heard('L', 'asleep'); shoe.L.asleepSince = Date.now() - j.Lz * 1000; log('Left went to sleep'); }
+    shoe.L.link = 'asleep (right will relink when it wakes)';
+  } else {
+    shoe.L.link = 'not linked to right: ' + j.lm + ' (links so far ' + j.u + ')';
   }
-  prev[name] = s;
+  leftWasAsleep = !j.L && j.Lz >= 0;
+  $('wifi').textContent = j.w ? 'on' : 'off';
+  const [active, dist] = j.ap;
+  $('dist').textContent = active ? dist.toFixed(2) + ' m' : (dist === 0 && j.al ? 'arrived' : 'not running');
+  $('aplast').textContent = j.al || '';
+  drawCard('L'); drawCard('R');
 }
-let rightAsleepSince = null, leftWasAsleep = false;
 
-// ---------------- "app" view: last heard from each shoe (live data or sleep beacons) ----------------
-const heard = {Left: null, Right: null}, beaconEvery = {Left: 120, Right: 120}, lost = {Left: false, Right: false};
-const lastCheck = {Left: -1, Right: -1};
-function heardFrom(name, v, how) {
-  heard[name] = {t: Date.now(), v, how};
-  if (lost[name]) { lost[name] = false; log(name + ' heard again (' + how + ')'); }
-}
-setInterval(() => {
-  for (const name of ['Left', 'Right']) {
-    const el = $(name == 'Left' ? 'hL' : 'hR'), h = heard[name];
-    if (!h) { el.textContent = name + ': not heard yet'; el.style.color = '#aaa'; continue; }
-    const age = (Date.now() - h.t) / 1000, lostAfter = beaconEvery[name] * 2 + 60;   // two missed beacons + margin
-    if (age > lostAfter) {
-      el.textContent = name + ': LOST - not heard for ' + mmss(age) + ' (last ' + h.v.toFixed(2) + ' V, ' + h.how + ')';
-      el.style.color = '#f55';
-      if (!lost[name]) { lost[name] = true; log(name + ' LOST - nothing for ' + mmss(age)); if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]); }
-    } else {
-      el.textContent = name + ': ' + h.how + ', ' + h.v.toFixed(2) + ' V \u00b7 heard ' + mmss(age) + ' ago';
-      el.style.color = '';
-    }
-  }
-}, 1000);
-
-// sleep beacons: manufacturer data (company 0xFFFF) 'S','S',ver,side,status,mV,sleeps,checks,moveWakes,buttonWakes,interval/10
+// ---------------- sleep beacons (listening, no connection) ----------------
+// manufacturer data (company 0xFFFF): 'S','S',ver,side,status,mV,sleeps,checks,moveWakes,buttonWakes,interval/10
 function onAdvert(e) {
   const d = e.manufacturerData && e.manufacturerData.get(0xFFFF);
   if (d && d.byteLength >= 15 && d.getUint8(0) == 83 && d.getUint8(1) == 83) {
-    const name = d.getUint8(3) ? 'Right' : 'Left', flat = d.getUint8(4) == 1;
+    const p = d.getUint8(3) ? 'R' : 'L', s = shoe[p], flat = d.getUint8(4) == 1;
     const v = d.getUint16(5, true) / 1000, checks = d.getUint16(9, true);
-    if (d.byteLength >= 16) beaconEvery[name] = d.getUint8(15) * 10 || 120;
-    heardFrom(name, v, flat ? 'FLAT, shutting down' : 'asleep');
-    if (checks != lastCheck[name]) { lastCheck[name] = checks; log(name + ' asleep, ' + v.toFixed(2) + ' V (beacon ' + checks + ')' + (flat ? ' - FLAT' : '')); }
+    s.sl = d.getUint16(7, true); s.mw = d.getUint16(11, true); s.bw = d.getUint16(13, true);
+    if (d.byteLength >= 16) s.beaconEvery = d.getUint8(15) * 10 || 120;
+    heard(p, flat ? 'flat' : 'asleep', v);
+    if (checks != s.check) { s.check = checks; log(SIDES[p] + ' asleep, ' + v.toFixed(2) + ' V (beacon ' + checks + ')' + (flat ? ' - FLAT' : '')); }
+    drawCard(p);
     return;
   }
   const n = e.name || (e.device && e.device.name) || '';
-  if (n.startsWith('SafeStride-')) heardFrom(n.endsWith('L') ? 'Left' : 'Right', heard[n.endsWith('L') ? 'Left' : 'Right']?.v ?? 0, 'awake, not linked');
+  if (n == 'SafeStride-L' && !(prev.L && shoe.L.state == 'awake')) { heard('L', 'awake'); shoe.L.link = 'awake, not linked to right'; }
+  if (n == 'SafeStride-R' && !connected) { heard('R', 'awake'); shoe.R.link = 'awake, press Reconnect'; }
 }
 async function startWatch() {
   if (!navigator.bluetooth || !navigator.bluetooth.requestLEScan) {
@@ -286,10 +349,12 @@ async function startWatch() {
     await navigator.bluetooth.requestLEScan({filters: [{manufacturerData: [{companyIdentifier: 0xFFFF}]}, {namePrefix: 'SafeStride'}],
                                              keepRepeatedDevices: true});
     navigator.bluetooth.addEventListener('advertisementreceived', onAdvert);
-    $('watchst').textContent = 'Listening for sleeping shoes (keep this page open).';
+    $('watchst').textContent = 'Listening for sleeping shoes - keep this page open.';
+    $('watchbtn').textContent = 'Listening ✓';
     log('Listening for beacons');
   } catch (err) { $('watchst').textContent = 'Could not start listening: ' + err.message; }
 }
+
 // keep the phone screen on while watching (Android pauses Bluetooth for hidden pages)
 let wakeLock = null;
 async function lockScreen() {
@@ -298,32 +363,5 @@ async function lockScreen() {
 }
 $('wl').onchange = lockScreen;
 document.addEventListener('visibilitychange', () => { if (document.visibilityState == 'visible' && $('wl').checked) lockScreen(); });
-$('ka').onchange = () => send('awake?on=' + ($('ka').checked ? 1 : 0));
-
-function render(j) {
-  if (!j.R) return;
-  const R = parse(j.R);
-  fill('R', R);
-  heardFrom('Right', R.vbat, 'awake, connected');
-  wakeCheck('Right', R);
-  $('sleepR').textContent = sleepText('Right', R);
-  if (j.zz && !rightAsleepSince) { rightAsleepSince = now(); log('Right going to sleep'); }
-  if (j.L) { const L = parse(j.L); wakeCheck('Left', L); heardFrom('Left', L.vbat, 'awake, linked'); $('sleepL').textContent = sleepText('Left', L); }
-  else if (j.Lz >= 0) $('sleepL').textContent = 'Left: asleep for ' + mmss(j.Lz);
-  else $('sleepL').textContent = 'Left: not linked';
-  if (j.Lz >= 0 && !leftWasAsleep) log('Left went to sleep');
-  if (j.L && leftWasAsleep) log('Left linked again');
-  leftWasAsleep = j.Lz >= 0;
-  if (j.L) { fill('L', parse(j.L)); $('link').textContent = 'Left linked to right, last msg ' + j.La + ' ms ago'; }
-  else {
-    ['Lsteps','Lbat','Lbtn','La','Laxyz','Larng','Ltl','Ltyz','Lg','Lgxyz','Lpg','Lt','Lup'].forEach(k => $(k).textContent = '-');
-    $('Lbatw').textContent = '';
-    $('link').textContent = 'Left: ' + j.lm + ' (links so far: ' + j.u + ')';
-  }
-  $('wifi').textContent = j.w ? 'on' : 'off';
-  const [active, dist] = j.ap;
-  $('dist').textContent = active ? dist.toFixed(2) + ' m' : (dist === 0 && j.al ? 'arrived' : 'not running');
-  $('aplast').textContent = j.al || '';
-}
 </script>
 </body></html>
