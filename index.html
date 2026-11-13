@@ -27,7 +27,7 @@ label{display:block;margin:6px 0;font-size:17px}
 .card{flex:1;min-width:0;border:1px solid #333;border-radius:10px;padding:10px}
 .card h3{margin:0 0 6px;font-size:20px;display:flex;justify-content:space-between;align-items:center}
 .badge{font-size:13px;font-weight:bold;padding:3px 8px;border-radius:10px;background:#333;color:#aaa}
-.b-awake{background:#2a5;color:#000}.b-asleep{background:#246;color:#cde}.b-lost,.b-flat{background:#c33;color:#fff}
+.b-awake{background:#2a5;color:#000}.b-unknown{background:#555;color:#ddd}.b-asleep{background:#246;color:#cde}.b-lost,.b-flat{background:#c33;color:#fff}
 .bat{font-size:30px;font-weight:bold}
 .line{font-size:15px;margin:3px 0;color:#ccc}
 .small{font-size:13px;color:#999}
@@ -175,6 +175,14 @@ function heard(p, state, v) {
   if (state == 'awake') s.asleepSince = null;
   s.state = state; s.t = Date.now(); if (v) s.v = v;
 }
+let listening = false;
+function relayLost(why) {   // the left's live data comes through the right, so it stops when the right does
+  const L = shoe.L;
+  if (L.state == 'awake') {
+    L.state = 'unknown';
+    L.link = 'no news since ' + why + (L.ts != null && L.ts >= 0 && L.ts < 20 ? ' - it was about to sleep too' : '');
+  }
+}
 function drawCard(p) {
   const s = shoe[p], name = SIDES[p];
   const age = s.t ? (Date.now() - s.t) / 1000 : null;
@@ -185,7 +193,7 @@ function drawCard(p) {
   }
   const state = !s.t ? null : s.lost ? 'lost' : s.state;
   const b = $(p + 'badge');
-  b.textContent = state ? state.toUpperCase() : '-';
+  b.textContent = state == 'unknown' ? '?' : state ? state.toUpperCase() : '-';
   b.className = 'badge' + (state ? ' b-' + state : '');
   $('card' + p).style.borderColor = s.lost ? '#c33' : '#333';
   if (s.v) {
@@ -198,11 +206,19 @@ function drawCard(p) {
   $(p + 'sleep').textContent =
     state == 'awake' ? (s.ts < 0 ? 'kept awake' : s.ts != null ? 'sleeps in ' + mmss(s.ts) + ' if still' : '') :
     (state == 'asleep' || state == 'lost') && s.asleepSince ? 'asleep for ' + mmss((Date.now() - s.asleepSince) / 1000) :
-    state == 'flat' ? 'battery flat - shut down' : '';
+    state == 'flat' ? 'battery flat - shut down' :
+    state == 'unknown' ? (listening ? 'waiting for its sleep beacon' : 'unknown - press Listen to hear it while asleep') : '';
   $(p + 'counts').textContent = s.sl ? 'slept ' + s.sl + '× · woke on movement ' + s.mw + ', button ' + s.bw : '';
   $(p + 'link').textContent = s.link;
 }
-setInterval(() => { drawCard('L'); drawCard('R'); }, 1000);
+function drawHint() {
+  const sleepy = ['asleep', 'unknown'].includes(shoe.L.state) || ['asleep', 'unknown'].includes(shoe.R.state);
+  if (!listening && sleepy) {
+    $('watchst').textContent = 'A shoe is asleep - press "Listen for sleeping shoes" to get its battery updates.';
+    $('watchst').style.color = '#fa4';
+  }
+}
+setInterval(() => { drawCard('L'); drawCard('R'); drawHint(); }, 1000);
 
 // ---------------- Bluetooth: control link to the right shoe ----------------
 let dev = null, ch = {}, connected = false, gattQ = Promise.resolve();
@@ -232,6 +248,8 @@ async function openGatt() {
 }
 function onDisconnect() {
   if (connected && shoe.R.state != 'asleep') log('Connection lost');
+  if (shoe.R.state == 'asleep') { shoe.R.link = 'asleep - reconnects when it wakes'; relayLost('the right shoe went to sleep'); }
+  else { shoe.R.link = 'connection lost - retrying'; relayLost('the connection to the right shoe dropped'); }
   connected = false;
   $('st').textContent = shoe.R.state == 'asleep' ? 'Right asleep - reconnects when it wakes' : 'disconnected - retrying...';
   setTimeout(async () => { try { await openGatt(); } catch (e) { onDisconnect(); } }, 2000);
@@ -303,8 +321,13 @@ function render(j) {
   if (!j.R) return;
   live('R', parse(j.R));
   shoe.R.link = 'connected to this page';
-  if (j.zz && shoe.R.state != 'asleep') { heard('R', 'asleep'); log('Right going to sleep'); $('st').textContent = 'Right going to sleep...'; }
-  if (j.L) {
+  if (j.zz && shoe.R.state != 'asleep') {
+    heard('R', 'asleep'); log('Right going to sleep'); $('st').textContent = 'Right going to sleep...';
+    shoe.R.link = 'asleep - reconnects when it wakes';
+    relayLost('the right shoe went to sleep');
+    return;
+  }
+  if (j.L && !j.zz) {
     live('L', parse(j.L));
     shoe.L.link = 'linked via right, last msg ' + j.La + ' ms ago';
     if (leftWasAsleep) log('Left linked again');
@@ -351,6 +374,7 @@ async function startWatch() {
     navigator.bluetooth.addEventListener('advertisementreceived', onAdvert);
     $('watchst').textContent = 'Listening for sleeping shoes - keep this page open.';
     $('watchbtn').textContent = 'Listening ✓';
+    listening = true; $('watchst').style.color = '';
     log('Listening for beacons');
   } catch (err) { $('watchst').textContent = 'Could not start listening: ' + err.message; }
 }
