@@ -37,6 +37,8 @@ label{display:block;margin:6px 0;font-size:17px}
  <div><div class="dim">Right steps</div><div class="big" id="Rsteps">-</div><div class="dim" id="Rint"></div></div>
 </div>
 <div class="dim" id="link"></div>
+<div class="dim" id="sleepL"></div><div class="dim" id="sleepR"></div>
+<label class="dim" style="font-size:15px"><input type="checkbox" id="ka"> Keep awake (don't sleep while I'm testing)</label>
 <div class="warn"><span id="Lbatw"></span> <span id="Rbatw"></span></div>
 
 <div class="box"><b>Mode</b>
@@ -65,6 +67,8 @@ label{display:block;margin:6px 0;font-size:17px}
 <button onclick="tryE('L')">Left</button><button onclick="tryE('R')">Right</button><button onclick="tryE('B')">Both</button>
 </div>
 <button onclick="send('reset')">Reset step counts</button>
+<div class="box"><b>Log</b> <button onclick="logLines.length = 0; showLog()" style="font-size:13px;padding:4px 8px">clear</button>
+<pre id="log" style="max-height:220px;overflow:auto"></pre></div>
 </div>
 
 <div id="p2" style="display:none">
@@ -138,12 +142,16 @@ async function openGatt() {
   $('chk').textContent = dec.decode(await ch.chk.readValue());
   connected = true;
   $('st').textContent = 'connected to ' + dev.name;
+  log(rightAsleepSince ? 'Right awake again, reconnected' : 'Connected');
+  rightAsleepSince = null;
   $('conn').textContent = 'Reconnect';
   poll();
 }
 function onDisconnect() {
+  if (connected && !rightAsleepSince) log('Connection lost');
   connected = false;
-  $('st').textContent = 'disconnected - retrying...';
+  $('st').textContent = rightAsleepSince ? 'Right asleep since ' + rightAsleepSince + ' - reconnects when it wakes'
+                                         : 'disconnected - retrying...';
   setTimeout(async () => { try { await openGatt(); } catch (e) { onDisconnect(); } }, 2000);
 }
 function send(text) {   // commands are short (< 20 bytes) so they fit any packet size
@@ -162,17 +170,20 @@ function loadCfg(c) {
   document.querySelector('input[name=mode][value="' + c.mode + '"]').checked = true;
   $('se').value = c.se; $('sd').value = c.sd; $('sl').value = c.sl; $('side').value = c.side;
   $('ef').value = c.ef; $('em').value = c.em; $('en').value = c.en; $('ea').value = c.ea;
+  $('ka').checked = !!c.ka;
 }
 document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => send('config?mode=' + e.value));
 ['se','sd','sl','side','ef','em','en','ea'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
 function tryE(who) { send('play?u=' + who + '&e=' + $('te').value); }
 
 // ---------------- display ----------------
-// unit status CSV: btn,vbat,pct,ax,ay,az,gx,gy,gz,peakG,minA,maxA,temp,lvl,tilt,tiltY,tiltZ,steps,stepInt,ms
+// unit status CSV: btn,vbat,pct,ax,ay,az,gx,gy,gz,peakG,minA,maxA,temp,lvl,tilt,tiltY,tiltZ,steps,stepInt,ms,
+//                  sleeps,motionWakes,buttonWakes,secsToSleep (-1 = kept awake)
 function parse(csv) {
   const v = csv.split(',').map(Number);
   return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
-          t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19]};
+          t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19],
+          sl: v[20], mw: v[21], bw: v[22], ts: v[23]};
 }
 const lastSteps = {L: null, R: null};
 function steps(p, n, intv) {
@@ -200,9 +211,42 @@ function fill(p, s) {
   $(p+'up').textContent = Math.round(s.ms / 1000) + ' s';
   steps(p, s.steps, s.si);
 }
+// ---------------- sleep monitoring + log ----------------
+const logLines = [];
+const now = () => new Date().toLocaleTimeString();
+function log(t) { logLines.unshift(now() + '  ' + t); if (logLines.length > 200) logLines.pop(); showLog(); }
+function showLog() { $('log').textContent = logLines.join('\n'); }
+const mmss = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+function sleepText(name, s) {
+  const counts = s.sl ? ' \u00b7 slept ' + s.sl + '\u00d7 (woke on movement ' + s.mw + ', button ' + s.bw + ')' : '';
+  return name + ': awake, ' + (s.ts < 0 ? 'kept awake' : 'sleeps in ' + mmss(Math.max(0, s.ts)) + ' if still') + counts;
+}
+const prev = {Left: null, Right: null};
+function wakeCheck(name, s) {   // log wake-ups by watching the counters
+  const p = prev[name];
+  if (p) {
+    if (s.mw > p.mw) log(name + ' woke on movement');
+    if (s.bw > p.bw) log(name + ' woke on button');
+    if (s.ms < p.ms && s.mw == p.mw && s.bw == p.bw) log(name + ' restarted');
+  }
+  prev[name] = s;
+}
+let rightAsleepSince = null, leftWasAsleep = false;
+$('ka').onchange = () => send('awake?on=' + ($('ka').checked ? 1 : 0));
+
 function render(j) {
   if (!j.R) return;
-  fill('R', parse(j.R));
+  const R = parse(j.R);
+  fill('R', R);
+  wakeCheck('Right', R);
+  $('sleepR').textContent = sleepText('Right', R);
+  if (j.zz && !rightAsleepSince) { rightAsleepSince = now(); log('Right going to sleep'); }
+  if (j.L) { const L = parse(j.L); wakeCheck('Left', L); $('sleepL').textContent = sleepText('Left', L); }
+  else if (j.Lz >= 0) $('sleepL').textContent = 'Left: asleep for ' + mmss(j.Lz);
+  else $('sleepL').textContent = 'Left: not linked';
+  if (j.Lz >= 0 && !leftWasAsleep) log('Left went to sleep');
+  if (j.L && leftWasAsleep) log('Left linked again');
+  leftWasAsleep = j.Lz >= 0;
   if (j.L) { fill('L', parse(j.L)); $('link').textContent = 'Left linked to right, last msg ' + j.La + ' ms ago'; }
   else {
     ['Lsteps','Lbat','Lbtn','La','Laxyz','Larng','Ltl','Ltyz','Lg','Lgxyz','Lpg','Lt','Lup'].forEach(k => $(k).textContent = '-');
