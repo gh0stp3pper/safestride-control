@@ -222,6 +222,7 @@ setInterval(() => { drawCard('L'); drawCard('R'); drawHint(); }, 1000);
 
 // ---------------- Bluetooth: control link to the right shoe ----------------
 let dev = null, ch = {}, connected = false, gattQ = Promise.resolve();
+let torn = 0;   // reads that mixed two updates (should stay 0 with the bigger packet size)
 function gatt(fn) { const p = gattQ.then(fn); gattQ = p.catch(() => {}); return p; }   // one GATT operation at a time
 
 async function connect() {
@@ -260,7 +261,13 @@ function send(text) {   // commands are short (< 20 bytes) so they fit any packe
 }
 async function poll() {
   if (!connected) return;
-  try { render(JSON.parse(dec.decode(await gatt(() => ch.st.readValue())))); }
+  try {
+    // firmware sends state + "|" + length; skip a read that mixed two updates (older firmware: no "|")
+    const raw = dec.decode(await gatt(() => ch.st.readValue())), i = raw.lastIndexOf('|');
+    const body = i > 0 ? raw.slice(0, i) : raw;
+    if (i > 0 && body.length != Number(raw.slice(i + 1))) { torn++; if (torn == 1) log('Skipped a mixed-up read (will count them)'); }
+    else render(JSON.parse(body));
+  }
   catch (e) { console.log('poll', e); }
   setTimeout(poll, 250);
 }
