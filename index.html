@@ -168,12 +168,12 @@ const shoe = {
   L: {state: null, t: null, v: null, asleepSince: null, ts: null, sl: 0, mw: 0, bw: 0, link: '', beaconEvery: 120, lost: false, check: -1},
   R: {state: null, t: null, v: null, asleepSince: null, ts: null, sl: 0, mw: 0, bw: 0, link: '', beaconEvery: 120, lost: false, check: -1},
 };
-function heard(p, state, v) {
+function heard(p, state, v, when) {
   const s = shoe[p];
   if (s.lost) { s.lost = false; log(SIDES[p] + ' heard again (' + state + ')'); }
   if (state == 'asleep' && s.state != 'asleep' && !s.asleepSince) s.asleepSince = Date.now();
   if (state == 'awake') s.asleepSince = null;
-  s.state = state; s.t = Date.now(); if (v) s.v = v;
+  s.state = state; s.t = when || Date.now(); if (v) s.v = v;
 }
 let listening = false;
 function relayLost(why) {   // the left's live data comes through the right, so it stops when the right does
@@ -347,16 +347,20 @@ function render(j) {
 
 // ---------------- sleep beacons (listening, no connection) ----------------
 // manufacturer data (company 0xFFFF): 'S','S',ver,side,status,mV,sleeps,checks,moveWakes,buttonWakes,interval/10
+function beacon(b, via) {   // b: {unit, flat, mv, sleeps, checks, moves, buttons, every, t?}
+  const p = b.unit, s = shoe[p], v = b.mv / 1000;
+  if (s.state == 'awake' && connected && p == 'R') return;   // stale beacon from before it woke
+  s.sl = b.sleeps; s.mw = b.moves; s.bw = b.buttons; s.beaconEvery = b.every || 120;
+  heard(p, b.flat ? 'flat' : 'asleep', v, b.t);
+  if (b.checks != s.check) { s.check = b.checks; log(SIDES[p] + ' asleep, ' + v.toFixed(2) + ' V (beacon ' + b.checks + via + ')' + (b.flat ? ' - FLAT' : '')); }
+  drawCard(p);
+}
 function onAdvert(e) {
   const d = e.manufacturerData && e.manufacturerData.get(0xFFFF);
   if (d && d.byteLength >= 15 && d.getUint8(0) == 83 && d.getUint8(1) == 83) {
-    const p = d.getUint8(3) ? 'R' : 'L', s = shoe[p], flat = d.getUint8(4) == 1;
-    const v = d.getUint16(5, true) / 1000, checks = d.getUint16(9, true);
-    s.sl = d.getUint16(7, true); s.mw = d.getUint16(11, true); s.bw = d.getUint16(13, true);
-    if (d.byteLength >= 16) s.beaconEvery = d.getUint8(15) * 10 || 120;
-    heard(p, flat ? 'flat' : 'asleep', v);
-    if (checks != s.check) { s.check = checks; log(SIDES[p] + ' asleep, ' + v.toFixed(2) + ' V (beacon ' + checks + ')' + (flat ? ' - FLAT' : '')); }
-    drawCard(p);
+    beacon({unit: d.getUint8(3) ? 'R' : 'L', flat: d.getUint8(4), mv: d.getUint16(5, true), sleeps: d.getUint16(7, true),
+            checks: d.getUint16(9, true), moves: d.getUint16(11, true), buttons: d.getUint16(13, true),
+            every: d.byteLength >= 16 ? d.getUint8(15) * 10 : 120}, '');
     return;
   }
   const n = e.name || (e.device && e.device.name) || '';
@@ -378,6 +382,26 @@ async function startWatch() {
     log('Listening for beacons');
   } catch (err) { $('watchst').textContent = 'Could not start listening: ' + err.message; }
 }
+
+// On the PC (page served by tools/sleep_logger.py at localhost) the logger hears the beacons and passes them on,
+// because Chromium on Linux can't listen for adverts itself.
+const seenPc = new Set();
+async function pollPc() {
+  try {
+    const r = await (await fetch('/beacons.json', {cache: 'no-store'})).json();
+    if (!listening) { listening = true; $('watchbtn').textContent = 'Listening via PC logger \u2713'; $('watchst').style.color = '';
+                      $('watchst').textContent = 'Sleep beacons come from the PC logger.'; log('Getting beacons from the PC logger'); }
+    const skew = Date.now() - r.now * 1000;       // PC clock vs page clock (same PC, so ~0)
+    for (const b of r.beacons) {
+      const key = b.unit + b.sleeps + '/' + b.checks;
+      if (seenPc.has(key)) continue;
+      seenPc.add(key);
+      beacon({...b, t: b.t * 1000 + skew}, ', via PC');
+    }
+  } catch (e) { /* not served by the logger - nothing to do */ return; }
+  setTimeout(pollPc, 3000);
+}
+if (['localhost', '127.0.0.1'].includes(location.hostname)) pollPc();
 
 // keep the phone screen on while watching (Android pauses Bluetooth for hidden pages)
 let wakeLock = null;
