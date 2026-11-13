@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Safe Stride control</title>
+<!-- Safe Stride test page over Bluetooth (Web Bluetooth, Chrome on Android / desktop).
+     Talks to the right unit running firmware/stride_unit. Must be opened from https:// or http://localhost. -->
+<style>
+body{font-family:sans-serif;margin:10px;background:#111;color:#eee;max-width:720px}
+pre{background:#000;border:1px solid #444;padding:8px;white-space:pre-wrap;font-size:12px}
+table{border-collapse:collapse}
+td,th{padding:4px 12px 4px 0;font-size:17px;text-align:left}
+th{color:#aaa;font-weight:normal}
+button,select,input{font-size:16px;padding:8px 10px;margin:4px 4px 0 0;background:#222;color:#eee;border:1px solid #555;border-radius:6px}
+input[type=number]{width:70px}
+.tabs button{padding:10px 18px}
+.tabs .on{background:#2a5;border-color:#2a5;color:#000}
+#conn{background:#2a5;color:#000;border-color:#2a5;font-weight:bold}
+.box{border:1px solid #333;border-radius:8px;padding:8px 10px;margin:10px 0}
+.big{font-size:40px;font-weight:bold;text-align:center;padding:6px;border-radius:8px;transition:background .15s}
+.flash{background:#2a5}
+#st,.dim{color:#aaa}
+label{display:block;margin:6px 0;font-size:17px}
+.row{display:flex;gap:10px}.row>div{flex:1}
+.warn{color:#f55;font-weight:bold}
+</style></head><body>
+
+<div class="tabs">
+  <button id="conn" onclick="connect()">Connect</button>
+  <button id="t1" class="on" onclick="tab(1)">Walk</button><button id="t2" onclick="tab(2)">IMU</button>
+  <span id="st">not connected</span>
+</div>
+<div id="nobt" class="warn" style="display:none;margin-top:8px"></div>
+
+<div id="p1">
+<div class="row">
+ <div><div class="dim">Left steps</div><div class="big" id="Lsteps">-</div><div class="dim" id="Lint"></div></div>
+ <div><div class="dim">Right steps</div><div class="big" id="Rsteps">-</div><div class="dim" id="Rint"></div></div>
+</div>
+<div class="dim" id="link"></div>
+<div class="warn"><span id="Lbatw"></span> <span id="Rbatw"></span></div>
+
+<div class="box"><b>Mode</b>
+<label><input type="radio" name="mode" value="0"> Off</label>
+<label><input type="radio" name="mode" value="1"> Own step (each shoe buzzes when it lands)</label>
+<label><input type="radio" name="mode" value="2"> Both (every step buzzes both shoes)</label>
+<label><input type="radio" name="mode" value="3"> Approach (fake hazard)</label>
+<div>Step effect <select id="se"></select></div>
+</div>
+
+<div class="box"><b>Approach</b>
+<div class="big" id="dist">-</div>
+<div class="dim" id="aplast" style="text-align:center"></div>
+<div>Start <input id="sd" type="number" step="0.5" min="1"> m &nbsp; step <input id="sl" type="number" step="0.05" min="0.3"> m</div>
+<div>Buzz <select id="side"><option value="0">stepping foot</option><option value="1">left shoe</option><option value="2">right shoe</option><option value="3">both shoes</option></select></div>
+<div>1.5&ndash;1.0 m <select id="ef"></select></div>
+<div>1.0&ndash;0.5 m <select id="em"></select></div>
+<div>&lt; 0.5 m <select id="en"></select></div>
+<div>Arrived <select id="ea"></select></div>
+<button onclick="send('approach?go=1')">Start</button><button onclick="send('approach?go=0')">Stop</button>
+<div class="dim">Or press the button on either shoe to start. Silent above 1.5 m.</div>
+</div>
+
+<div class="box"><b>Try an effect</b><br>
+<select id="te"></select><br>
+<button onclick="tryE('L')">Left</button><button onclick="tryE('R')">Right</button><button onclick="tryE('B')">Both</button>
+</div>
+<button onclick="send('reset')">Reset step counts</button>
+</div>
+
+<div id="p2" style="display:none">
+<table>
+<tr><th></th><th>Left</th><th>Right</th></tr>
+<tr><td>Battery</td><td id="Lbat"></td><td id="Rbat"></td></tr>
+<tr><td>Button</td><td id="Lbtn"></td><td id="Rbtn"></td></tr>
+<tr><td>|a|</td><td id="La"></td><td id="Ra"></td></tr>
+<tr><td class="dim">a x y z</td><td id="Laxyz" class="dim"></td><td id="Raxyz" class="dim"></td></tr>
+<tr><td class="dim">|a| range 1 s</td><td id="Larng" class="dim"></td><td id="Rarng" class="dim"></td></tr>
+<tr><td>Tilt from level</td><td id="Ltl"></td><td id="Rtl"></td></tr>
+<tr><td class="dim">toward Y / Z</td><td id="Ltyz" class="dim"></td><td id="Rtyz" class="dim"></td></tr>
+<tr><td>|gyro|</td><td id="Lg"></td><td id="Rg"></td></tr>
+<tr><td class="dim">gyro x y z</td><td id="Lgxyz" class="dim"></td><td id="Rgxyz" class="dim"></td></tr>
+<tr><td>Peak |gyro| 1 s</td><td id="Lpg"></td><td id="Rpg"></td></tr>
+<tr><td class="dim">IMU temp</td><td id="Lt" class="dim"></td><td id="Rt" class="dim"></td></tr>
+<tr><td>Uptime</td><td id="Lup"></td><td id="Rup"></td></tr>
+</table>
+<button onclick="send('led?u=L')">LED L</button><button onclick="send('led?u=R')">LED R</button><br>
+<button onclick="send('level?u=L')">Set level L</button><button onclick="send('level?u=R')">Set level R</button><button onclick="send('level?u=B')">Set level both</button>
+<pre id="chk"></pre>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const U = n => '5a4e00' + n + '-7b3c-4d2a-9f10-5afe57d1de00';
+const SVC = U('10'), UUIDS = {st: U('11'), cfg: U('12'), chk: U('13'), cmd: U('14')};
+const enc = new TextEncoder(), dec = new TextDecoder();
+
+// DRV2605L effect library (datasheet table 11.2) - a useful subset
+const EFFECTS = [[0,'none'],[1,'Strong click 100%'],[2,'Strong click 60%'],[3,'Strong click 30%'],[4,'Sharp click 100%'],
+ [7,'Soft bump 100%'],[10,'Double click 100%'],[11,'Double click 60%'],[12,'Triple click 100%'],[14,'Strong buzz 100%'],
+ [15,'Alert 750 ms'],[16,'Alert 1000 ms'],[24,'Sharp tick 100%'],[47,'Buzz 100%'],[48,'Buzz 80%'],[49,'Buzz 60%'],
+ [50,'Buzz 40%'],[51,'Buzz 20%'],[52,'Pulsing strong 100%'],[56,'Pulsing sharp 100%'],[58,'Transition click 100%'],
+ [64,'Transition hum 100%'],[70,'Ramp down (long)'],[82,'Ramp up (long)']];
+['se','ef','em','en','ea','te'].forEach(id => EFFECTS.forEach(([n, t]) => {
+  if (id === 'te' && !n) return;
+  const o = document.createElement('option'); o.value = n; o.textContent = n ? n + ' ' + t : t; $(id).appendChild(o);
+}));
+function tab(n) { $('p1').style.display = n == 1 ? '' : 'none'; $('p2').style.display = n == 2 ? '' : 'none';
+  $('t1').className = n == 1 ? 'on' : ''; $('t2').className = n == 2 ? 'on' : ''; }
+
+if (!navigator.bluetooth) {
+  $('nobt').style.display = '';
+  $('nobt').textContent = 'This browser has no Web Bluetooth. Use Chrome (Android or desktop), opened from https:// or http://localhost. ' +
+    'On Linux you may need chrome://flags/#enable-experimental-web-platform-features turned on.';
+}
+
+// ---------------- Bluetooth ----------------
+let dev = null, ch = {}, connected = false, gattQ = Promise.resolve();
+// Web Bluetooth allows one GATT operation at a time, so queue them
+function gatt(fn) { const p = gattQ.then(fn); gattQ = p.catch(() => {}); return p; }
+
+async function connect() {
+  try {
+    // match by service or by name (Chrome on Linux sometimes misses the service in the advert)
+    dev = await navigator.bluetooth.requestDevice({filters: [{services: [SVC]}, {namePrefix: 'SafeStride-R'}],
+                                                   optionalServices: [SVC]});
+    dev.addEventListener('gattserverdisconnected', onDisconnect);
+    await openGatt();
+  } catch (e) { $('st').textContent = 'connect failed: ' + e.message; }
+}
+async function openGatt() {
+  $('st').textContent = 'connecting to ' + dev.name + '...';
+  const server = await dev.gatt.connect();
+  const svc = await server.getPrimaryService(SVC);
+  for (const k in UUIDS) ch[k] = await svc.getCharacteristic(UUIDS[k]);
+  loadCfg(JSON.parse(dec.decode(await ch.cfg.readValue())));
+  $('chk').textContent = dec.decode(await ch.chk.readValue());
+  connected = true;
+  $('st').textContent = 'connected to ' + dev.name;
+  $('conn').textContent = 'Reconnect';
+  poll();
+}
+function onDisconnect() {
+  connected = false;
+  $('st').textContent = 'disconnected - retrying...';
+  setTimeout(async () => { try { await openGatt(); } catch (e) { onDisconnect(); } }, 2000);
+}
+function send(text) {   // commands are short (< 20 bytes) so they fit any packet size
+  if (!connected) return;
+  gatt(() => ch.cmd.writeValueWithResponse(enc.encode(text))).catch(e => console.log('send', e));
+}
+async function poll() {
+  if (!connected) return;
+  try { render(JSON.parse(dec.decode(await gatt(() => ch.st.readValue())))); }
+  catch (e) { console.log('poll', e); }
+  setTimeout(poll, 250);
+}
+
+// ---------------- settings ----------------
+function loadCfg(c) {
+  document.querySelector('input[name=mode][value="' + c.mode + '"]').checked = true;
+  $('se').value = c.se; $('sd').value = c.sd; $('sl').value = c.sl; $('side').value = c.side;
+  $('ef').value = c.ef; $('em').value = c.em; $('en').value = c.en; $('ea').value = c.ea;
+}
+document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => send('config?mode=' + e.value));
+['se','sd','sl','side','ef','em','en','ea'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
+function tryE(who) { send('play?u=' + who + '&e=' + $('te').value); }
+
+// ---------------- display ----------------
+// unit status CSV: btn,vbat,pct,ax,ay,az,gx,gy,gz,peakG,minA,maxA,temp,lvl,tilt,tiltY,tiltZ,steps,stepInt,ms
+function parse(csv) {
+  const v = csv.split(',').map(Number);
+  return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
+          t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19]};
+}
+const lastSteps = {L: null, R: null};
+function steps(p, n, intv) {
+  $(p + 'steps').textContent = n;
+  $(p + 'int').textContent = intv ? (intv / 1000).toFixed(2) + ' s since last' : '';
+  if (lastSteps[p] !== null && n > lastSteps[p]) { $(p + 'steps').classList.add('flash'); setTimeout(() => $(p + 'steps').classList.remove('flash'), 200); }
+  lastSteps[p] = n;
+}
+function fill(p, s) {
+  $(p+'btn').textContent = s.btn ? 'PRESSED' : 'up';
+  const low = s.vbat < 3.4;
+  $(p+'bat').textContent = s.vbat.toFixed(2) + ' V (' + s.pct + '%)' + (low ? ' LOW' : '');
+  $(p+'bat').style.color = low ? '#f55' : '';
+  $(p+'batw').textContent = low ? (p == 'L' ? 'Left' : 'Right') + ' battery low: ' + s.vbat.toFixed(2) + ' V' : '';
+  const [ax, ay, az] = s.a, [gx, gy, gz] = s.g;
+  $(p+'a').textContent = Math.hypot(ax, ay, az).toFixed(3) + ' g';
+  $(p+'axyz').textContent = s.a.map(v => v.toFixed(2)).join('  ');
+  $(p+'arng').textContent = s.mna.toFixed(2) + ' to ' + s.mxa.toFixed(2) + ' g';
+  $(p+'tl').textContent = s.lv ? s.tl + '°' : 'not set';
+  $(p+'tyz').textContent = s.lv ? s.ty + '° / ' + s.tz + '°' : '-';
+  $(p+'g').textContent = Math.hypot(gx, gy, gz).toFixed(0) + ' °/s';
+  $(p+'gxyz').textContent = s.g.map(v => v.toFixed(0)).join('  ');
+  $(p+'pg').textContent = s.pg + ' °/s';
+  $(p+'t').textContent = s.t.toFixed(1) + ' °C';
+  $(p+'up').textContent = Math.round(s.ms / 1000) + ' s';
+  steps(p, s.steps, s.si);
+}
+function render(j) {
+  if (!j.R) return;
+  fill('R', parse(j.R));
+  if (j.L) { fill('L', parse(j.L)); $('link').textContent = 'Left linked to right, last msg ' + j.La + ' ms ago'; }
+  else {
+    ['Lsteps','Lbat','Lbtn','La','Laxyz','Larng','Ltl','Ltyz','Lg','Lgxyz','Lpg','Lt','Lup'].forEach(k => $(k).textContent = '-');
+    $('Lbatw').textContent = '';
+    $('link').textContent = 'Left: ' + j.lm + ' (links so far: ' + j.u + ')';
+  }
+  const [active, dist] = j.ap;
+  $('dist').textContent = active ? dist.toFixed(2) + ' m' : (dist === 0 && j.al ? 'arrived' : 'not running');
+  $('aplast').textContent = j.al || '';
+}
+</script>
+</body></html>
