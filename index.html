@@ -84,7 +84,9 @@ label{display:block;margin:6px 0;font-size:17px}
 <tr><td>Uptime</td><td id="Lup"></td><td id="Rup"></td></tr>
 </table>
 <button onclick="send('led?u=L')">LED L</button><button onclick="send('led?u=R')">LED R</button><br>
-<button onclick="send('level?u=L')">Set level L</button><button onclick="send('level?u=R')">Set level R</button><button onclick="send('level?u=B')">Set level both</button>
+<button onclick="send('level?u=L')">Set level L</button><button onclick="send('level?u=R')">Set level R</button><button onclick="send('level?u=B')">Set level both</button><br>
+<button onclick="if (confirm('Put both shoes to sleep? Move them or press a button to wake.')) send('sleep')">Sleep both now</button>
+<div class="dim">Wi-Fi page: <span id="wifi">-</span> (hold the right button 5 s to toggle)</div>
 <pre id="chk"></pre>
 </div>
 
@@ -207,6 +209,7 @@ function render(j) {
     $('Lbatw').textContent = '';
     $('link').textContent = 'Left: ' + j.lm + ' (links so far: ' + j.u + ')';
   }
+  $('wifi').textContent = j.w ? 'on' : 'off';
   const [active, dist] = j.ap;
   $('dist').textContent = active ? dist.toFixed(2) + ' m' : (dist === 0 && j.al ? 'arrived' : 'not running');
   $('aplast').textContent = j.al || '';
