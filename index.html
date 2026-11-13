@@ -32,6 +32,13 @@ label{display:block;margin:6px 0;font-size:17px}
 <div id="nobt" class="warn" style="display:none;margin-top:8px"></div>
 
 <div id="p1">
+<div class="box"><b>Shoes</b>
+ <div id="hL" style="font-size:17px;margin:4px 0">Left: not heard yet</div>
+ <div id="hR" style="font-size:17px;margin:4px 0">Right: not heard yet</div>
+ <button onclick="startWatch()">Listen for sleeping shoes</button>
+ <label class="dim" style="font-size:15px;display:inline"><input type="checkbox" id="wl"> keep screen on</label>
+ <div class="dim" id="watchst"></div>
+</div>
 <div class="row">
  <div><div class="dim">Left steps</div><div class="big" id="Lsteps">-</div><div class="dim" id="Lint"></div></div>
  <div><div class="dim">Right steps</div><div class="big" id="Rsteps">-</div><div class="dim" id="Rint"></div></div>
@@ -232,16 +239,76 @@ function wakeCheck(name, s) {   // log wake-ups by watching the counters
   prev[name] = s;
 }
 let rightAsleepSince = null, leftWasAsleep = false;
+
+// ---------------- "app" view: last heard from each shoe (live data or sleep beacons) ----------------
+const heard = {Left: null, Right: null}, beaconEvery = {Left: 120, Right: 120}, lost = {Left: false, Right: false};
+const lastCheck = {Left: -1, Right: -1};
+function heardFrom(name, v, how) {
+  heard[name] = {t: Date.now(), v, how};
+  if (lost[name]) { lost[name] = false; log(name + ' heard again (' + how + ')'); }
+}
+setInterval(() => {
+  for (const name of ['Left', 'Right']) {
+    const el = $(name == 'Left' ? 'hL' : 'hR'), h = heard[name];
+    if (!h) { el.textContent = name + ': not heard yet'; el.style.color = '#aaa'; continue; }
+    const age = (Date.now() - h.t) / 1000, lostAfter = beaconEvery[name] * 2 + 60;   // two missed beacons + margin
+    if (age > lostAfter) {
+      el.textContent = name + ': LOST - not heard for ' + mmss(age) + ' (last ' + h.v.toFixed(2) + ' V, ' + h.how + ')';
+      el.style.color = '#f55';
+      if (!lost[name]) { lost[name] = true; log(name + ' LOST - nothing for ' + mmss(age)); if (navigator.vibrate) navigator.vibrate([400, 200, 400, 200, 400]); }
+    } else {
+      el.textContent = name + ': ' + h.how + ', ' + h.v.toFixed(2) + ' V \u00b7 heard ' + mmss(age) + ' ago';
+      el.style.color = '';
+    }
+  }
+}, 1000);
+
+// sleep beacons: manufacturer data (company 0xFFFF) 'S','S',ver,side,status,mV,sleeps,checks,moveWakes,buttonWakes,interval/10
+function onAdvert(e) {
+  const d = e.manufacturerData && e.manufacturerData.get(0xFFFF);
+  if (d && d.byteLength >= 15 && d.getUint8(0) == 83 && d.getUint8(1) == 83) {
+    const name = d.getUint8(3) ? 'Right' : 'Left', flat = d.getUint8(4) == 1;
+    const v = d.getUint16(5, true) / 1000, checks = d.getUint16(9, true);
+    if (d.byteLength >= 16) beaconEvery[name] = d.getUint8(15) * 10 || 120;
+    heardFrom(name, v, flat ? 'FLAT, shutting down' : 'asleep');
+    if (checks != lastCheck[name]) { lastCheck[name] = checks; log(name + ' asleep, ' + v.toFixed(2) + ' V (beacon ' + checks + ')' + (flat ? ' - FLAT' : '')); }
+    return;
+  }
+  const n = e.name || (e.device && e.device.name) || '';
+  if (n.startsWith('SafeStride-')) heardFrom(n.endsWith('L') ? 'Left' : 'Right', heard[n.endsWith('L') ? 'Left' : 'Right']?.v ?? 0, 'awake, not linked');
+}
+async function startWatch() {
+  if (!navigator.bluetooth || !navigator.bluetooth.requestLEScan) {
+    $('watchst').textContent = 'This Chrome can\'t listen for beacons yet: open chrome://flags, turn on "Experimental Web Platform features", restart Chrome.';
+    return;
+  }
+  try {
+    await navigator.bluetooth.requestLEScan({filters: [{manufacturerData: [{companyIdentifier: 0xFFFF}]}, {namePrefix: 'SafeStride'}],
+                                             keepRepeatedDevices: true});
+    navigator.bluetooth.addEventListener('advertisementreceived', onAdvert);
+    $('watchst').textContent = 'Listening for sleeping shoes (keep this page open).';
+    log('Listening for beacons');
+  } catch (err) { $('watchst').textContent = 'Could not start listening: ' + err.message; }
+}
+// keep the phone screen on while watching (Android pauses Bluetooth for hidden pages)
+let wakeLock = null;
+async function lockScreen() {
+  try { wakeLock = $('wl').checked ? await navigator.wakeLock.request('screen') : (wakeLock && wakeLock.release(), null); }
+  catch (e) { $('watchst').textContent = 'Screen lock not available: ' + e.message; }
+}
+$('wl').onchange = lockScreen;
+document.addEventListener('visibilitychange', () => { if (document.visibilityState == 'visible' && $('wl').checked) lockScreen(); });
 $('ka').onchange = () => send('awake?on=' + ($('ka').checked ? 1 : 0));
 
 function render(j) {
   if (!j.R) return;
   const R = parse(j.R);
   fill('R', R);
+  heardFrom('Right', R.vbat, 'awake, connected');
   wakeCheck('Right', R);
   $('sleepR').textContent = sleepText('Right', R);
   if (j.zz && !rightAsleepSince) { rightAsleepSince = now(); log('Right going to sleep'); }
-  if (j.L) { const L = parse(j.L); wakeCheck('Left', L); $('sleepL').textContent = sleepText('Left', L); }
+  if (j.L) { const L = parse(j.L); wakeCheck('Left', L); heardFrom('Left', L.vbat, 'awake, linked'); $('sleepL').textContent = sleepText('Left', L); }
   else if (j.Lz >= 0) $('sleepL').textContent = 'Left: asleep for ' + mmss(j.Lz);
   else $('sleepL').textContent = 'Left: not linked';
   if (j.Lz >= 0 && !leftWasAsleep) log('Left went to sleep');
