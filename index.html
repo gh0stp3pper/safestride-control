@@ -14,7 +14,7 @@ th{color:#aaa;font-weight:normal}
 button,select,input{font-size:16px;padding:8px 10px;margin:4px 4px 0 0;background:#222;color:#eee;border:1px solid #555;border-radius:6px}
 input[type=number]{width:70px}
 .tabs button{padding:10px 16px}
-.tabs .on{background:#2a5;border-color:#2a5;color:#000}
+.tabs .on,#acts .on{background:#2a5;border-color:#2a5;color:#000}
 #conn{background:#2a5;color:#000;border-color:#2a5;font-weight:bold}
 .box{border:1px solid #333;border-radius:8px;padding:8px 10px;margin:10px 0}
 .big{font-size:40px;font-weight:bold;text-align:center;padding:4px;border-radius:8px;transition:background .15s}
@@ -146,7 +146,13 @@ label{display:block;margin:6px 0;font-size:17px}
 <button onclick="grSave()">save CSV</button>
 <span id="grst" class="dim"></span>
 <canvas id="graph" style="width:100%;height:380px;display:block;margin-top:6px"></canvas>
-<div class="dim">100 samples a second from each shoe, last 8 s. Top: rotation speed |gyro|, with the swing (red) and foot-flat (green)
+<div id="heading" class="mono"></div>
+<div><b>Label what you're doing</b> (for recording test data)</div>
+<div id="acts"><button data-a="walk">Walking</button><button data-a="turn">Turning</button><button data-a="fidget">Fidgeting</button><button data-a="stand">Standing</button><button data-a="">No label</button></div>
+<button id="markb" style="width:100%;padding:18px;font-size:20px;margin-top:4px">Mark (tap on each real step / turn)</button>
+<div id="labst" class="mono"></div>
+<button onclick="hdZero()">Zero turn angle</button>
+<div class="dim">100 samples a second from each shoe, last 8 s (the last 10 minutes are kept for "save CSV"). Top: rotation speed |gyro|, with the swing (red) and foot-flat (green)
 thresholds. Bottom: |a|, with the foot-flat band around 1 g (and the landing threshold in red, if on). Solid line = counted step, x = near miss. Left blue, right orange.</div>
 </div>
 
@@ -645,15 +651,20 @@ function ctRecord() {
 }
 
 // ---- live graph ----
-const GR = {win: 8000, keep: 60000, data: {L: [], R: []}, paused: false, pauseAt: 0, col: {L: '#4aa3ff', R: '#ff9a3c'}};
+const GR = {win: 8000, keep: 600000, labels: [], act: '', data: {L: [], R: []}, paused: false, pauseAt: 0, col: {L: '#4aa3ff', R: '#ff9a3c'}};
+const HD = {L: 0, R: 0};   // turn angle from integrating the yaw rate (deg)
 function onTrace(e) {
-  const v = new Uint8Array(e.target.value.buffer), foot = String.fromCharCode(v[1]);
-  if (v.length < 26 || v[0] != 71 || !GR.data[foot]) return;
-  const t0 = performance.now(), d = GR.data[foot];
+  const dv = e.target.value, v = new Uint8Array(dv.buffer, dv.byteOffset || 0, dv.byteLength), foot = String.fromCharCode(v[1]);
+  if (v.length < 47 || v[0] != 71 || !GR.data[foot]) return;
+  const t0 = performance.now(), d = GR.data[foot], lv = v[6] & 1, dw = new DataView(v.buffer, v.byteOffset, v.byteLength);
   for (let i = 0; i < 10; i++) {
     const bit = (o) => (v[o + (i >> 3)] >> (i & 7)) & 1;
-    d.push({t: t0 - (9 - i) * 10, g: v[6 + i] * 2, a: v[16 + i] / 40, s: bit(2), n: bit(4)});
+    const yaw = dw.getInt16(7 + 2 * i, true), oth = v[27 + i] * 2;
+    d.push({t: t0 - (9 - i) * 10, yaw, oth, a: v[37 + i] / 40, lv, s: bit(2), n: bit(4),
+            g: $('sm').value == 1 && lv ? oth : Math.round(Math.hypot(yaw, oth))});
+    HD[foot] += yaw * 0.01;
   }
+  $('heading').textContent = lv ? 'turned: L ' + Math.round(HD.L) + '°, R ' + Math.round(HD.R) + '°  (+ = left)' : 'turn angle needs Set level (IMU tab)';
   while (d.length && d[0].t < t0 - GR.keep) d.shift();
   $('grst').textContent = '';
 }
@@ -661,15 +672,30 @@ $('gron').onchange = () => {
   if ($('gron').checked && connected && !ch.tr) $('grst').textContent = 'shoes need the new firmware for this';
   send('trace?on=' + ($('gron').checked ? 1 : 0));
 };
+function hdZero() { HD.L = HD.R = 0; }
+document.querySelectorAll('#acts button').forEach(b => b.onclick = () => {
+  GR.act = b.dataset.a; GR.labels.push({t: performance.now(), kind: 'act', v: GR.act});
+  document.querySelectorAll('#acts button').forEach(x => x.className = x == b && GR.act ? 'on' : '');
+  labStatus(); log('Label: ' + (GR.act || 'none'));
+});
+$('markb').onclick = () => { GR.labels.push({t: performance.now(), kind: 'mark', v: GR.act || 'mark'}); labStatus(); };
+function labStatus() {
+  const marks = GR.labels.filter(l => l.kind == 'mark').length;
+  $('labst').textContent = 'now: ' + (GR.act || 'no label') + ' · marks ' + marks;
+}
 function grPause() { GR.paused = !GR.paused; GR.pauseAt = performance.now(); $('grpause').textContent = GR.paused ? 'Resume' : 'Pause'; }
 function grSave() {
+  // one row per sample; label rows have foot = label (activity change) or mark (tap); activity = what was going on
   const rows = [];
-  ['L', 'R'].forEach(f => GR.data[f].forEach(p => rows.push([Math.round(p.t), SIDES[f], p.g, p.a.toFixed(3), p.s, p.n])));
+  ['L', 'R'].forEach(f => GR.data[f].forEach(p => rows.push([p.t, f, p.yaw, p.oth, p.a.toFixed(3), p.lv, p.s, p.n])));
+  GR.labels.forEach(l => rows.push([l.t, l.kind == 'act' ? 'label' : 'mark', '', '', '', '', '', '', l.v]));
   rows.sort((x, y) => x[0] - y[0]);
+  let act = '';
+  rows.forEach(r => { if (r[1] == 'label') act = r[8]; else if (r[1] != 'mark') r[8] = act; });
   const t0 = rows.length ? rows[0][0] : 0;
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob(['# ' + stDesc() + '\ntime_ms,foot,gyro_dps,acc_g,step,near_miss\n' +
-    rows.map(r => [r[0] - t0].concat(r.slice(1)).join(',')).join('\n') + '\n'], {type: 'text/csv'}));
+  a.href = URL.createObjectURL(new Blob(['# ' + stDesc() + '\ntime_ms,foot,yaw_dps,other_dps,acc_g,level_set,step,near_miss,activity\n' +
+    rows.map(r => [Math.round(r[0] - t0)].concat(r.slice(1)).join(',')).join('\n') + '\n'], {type: 'text/csv'}));
   a.download = 'safestride_trace_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.csv';
   a.click();
 }
@@ -693,6 +719,16 @@ function drawGraph() {
   [0, 1, 2, 3].forEach(a => { x.beginPath(); x.moveTo(L, ay(a)); x.lineTo(R, ay(a)); x.stroke(); x.fillText(a + ' g', 4, ay(a) + 4); });
   x.fillText($('sm').value == 1 ? 'rotation without turning, deg/s' : '|gyro| deg/s', L + 4, gTop + 10); x.fillText('|a|', L + 4, aTop + 10);
   for (let s = 0; s <= GR.win / 1000; s++) { const t = tEnd - s * 1000; x.fillText('-' + s + ' s', tx(t) - 10, H - 4); }
+  // labelled activities as shaded bands, marks as ticks along the bottom
+  const ACOL = {walk: 'rgba(80,160,255,0.10)', turn: 'rgba(255,200,60,0.14)', fidget: 'rgba(255,80,80,0.12)', stand: 'rgba(160,160,160,0.10)'};
+  GR.labels.forEach((l, i) => {
+    if (l.kind == 'mark') { if (l.t >= tStart) { x.fillStyle = '#fff'; x.fillRect(tx(l.t) - 1, aBot - 10, 3, 10); } return; }
+    if (!ACOL[l.v]) return;
+    const nx = GR.labels.slice(i + 1).find(m => m.kind == 'act'), t1 = nx ? nx.t : tEnd;
+    if (t1 < tStart) return;
+    x.fillStyle = ACOL[l.v]; x.fillRect(tx(Math.max(l.t, tStart)), gTop, tx(t1) - tx(Math.max(l.t, tStart)), aBot - gTop);
+    x.fillStyle = '#aaa'; x.fillText(l.v, tx(Math.max(l.t, tStart)) + 3, aTop - 2);
+  });
   // thresholds
   const sw = Number($('sw').value), stv = Number($('st').value), sg = Number($('stg').value);
   x.fillStyle = 'rgba(40,170,80,0.15)'; x.fillRect(L, ay(1 + sg), R - L, ay(1 - sg) - ay(1 + sg));
@@ -704,7 +740,9 @@ function drawGraph() {
   x.setLineDash([]);
   // traces, step lines and near misses
   ['L', 'R'].forEach(f => {
-    const d = GR.data[f].filter(p => p.t >= tStart && p.t <= tEnd);
+    const all = GR.data[f]; let i0 = all.length;
+    while (i0 > 0 && all[i0 - 1].t >= tStart) i0--;               // only the visible part (up to 10 min is kept)
+    const d = all.slice(i0).filter(p => p.t <= tEnd);
     x.strokeStyle = GR.col[f]; x.lineWidth = 1.5;
     [[gy, 'g'], [ay, 'a']].forEach(([fy, k]) => {
       x.beginPath(); d.forEach((p, i) => { const X = tx(p.t), Y = fy(p[k]); i && p.t - d[i - 1].t < 60 ? x.lineTo(X, Y) : x.moveTo(X, Y); }); x.stroke();
