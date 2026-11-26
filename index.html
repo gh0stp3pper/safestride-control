@@ -17,6 +17,8 @@ input[type=number]{width:70px}
 .tabs .on,#acts .on{background:#2a5;border-color:#2a5;color:#000}
 #conn{background:#2a5;color:#000;border-color:#2a5;font-weight:bold}
 .box{border:1px solid #333;border-radius:8px;padding:8px 10px;margin:10px 0}
+#fans button{width:47%;padding:22px 0;font-size:20px}
+#fans button.wide{width:96%}
 .big{font-size:40px;font-weight:bold;text-align:center;padding:4px;border-radius:8px;transition:background .15s}
 .flash{background:#2a5}
 #st,.dim{color:#aaa}
@@ -38,7 +40,7 @@ label{display:block;margin:6px 0;font-size:17px}
 
 <div class="tabs">
   <button id="conn" onclick="connect()">Connect</button>
-  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button><button id="t4" onclick="tab(4)">Detector</button><button id="t5" onclick="tab(5)">Steps</button>
+  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button><button id="t4" onclick="tab(4)">Detector</button><button id="t5" onclick="tab(5)">Steps</button><button id="t6" onclick="tab(6)">Feel test</button>
 </div>
 <div id="st" style="margin-top:6px">not connected</div>
 <div id="nobt" class="warn" style="display:none;margin-top:8px"></div>
@@ -136,6 +138,31 @@ label{display:block;margin:6px 0;font-size:17px}
 <button onclick="send('level?u=L')">Set level L</button><button onclick="send('level?u=R')">Set level R</button><button onclick="send('level?u=B')">Set level both</button>
 <div class="dim" style="margin-top:6px">Wi-Fi page: <span id="wifi">-</span> (hold the right button 5 s to toggle)</div>
 <pre id="chk"></pre>
+</div>
+
+<!-- ============ Feel test: can people tell the alerts apart? ============ -->
+<div id="p6" style="display:none">
+<div class="box"><b>Feel test</b>
+<div class="dim">The shoes play alerts in random order without saying which. The wearer says what they think each one was.
+Shows how often each alert is recognised and what it gets mixed up with. Uses the effects set on the Alerts tab.</div>
+<div>Participant <input id="fpid" value="P1" style="width:5em"> <span class="dim">(a code, not a name)</span></div>
+<div>Include
+ <label><input type="checkbox" class="finc" value="far" checked> far</label>
+ <label><input type="checkbox" class="finc" value="mid" checked> 1 m</label>
+ <label><input type="checkbox" class="finc" value="near" checked> close</label>
+ <label><input type="checkbox" class="finc" value="arrive" checked> at the step</label>
+ <label><input type="checkbox" class="finc" value="drop" checked> drop</label>
+ <label><input type="checkbox" class="finc" value="lost"> detector lost</label></div>
+<div>Each one <input id="frep" type="number" min="1" max="20" value="5" style="width:4em"> times &nbsp;
+ <label><input type="checkbox" id="fside" checked> also ask which shoe</label></div>
+<button onclick="feelLearn()">1. Learn: play each one with its name</button>
+<button onclick="feelStart()">2. Start test</button>
+<button onclick="feelStop()">Stop</button>
+<div id="fnow" class="big" style="font-size:24px"></div>
+<div id="fans"></div>
+<pre id="fres" class="mono" style="white-space:pre;overflow-x:auto"></pre>
+<button onclick="feelSave()">save CSV</button> <span class="dim">(all participants so far)</span>
+</div>
 </div>
 
 <!-- ============ Steps: check and tune step detection ============ -->
@@ -253,7 +280,7 @@ const EFFECTS = [[0,'none'],[1,'Strong click 100%'],[2,'Strong click 60%'],[3,'S
   if (id === 'te' && !n) return;
   const o = document.createElement('option'); o.value = n; o.textContent = n ? n + ' ' + t : t; $(id).appendChild(o);
 }));
-function tab(n) { [1, 2, 3, 4, 5].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
+function tab(n) { [1, 2, 3, 4, 5, 6].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
 
 if (!navigator.bluetooth) {
   $('nobt').style.display = '';
@@ -757,6 +784,96 @@ function drawGraph() {
   });
 }
 requestAnimationFrame(drawGraph);
+
+// ---- feel test ----
+const FEEL = {far: ['Far', 'ef'], mid: ['1 metre', 'em'], near: ['Close', 'en'], arrive: ['At the step', 'ea'], drop: ['Drop', 'ed'], lost: ['Detector lost', null]};
+const fx = k => k == 'lost' ? 70 : Number($(FEEL[k][1]).value);
+const ft = {on: false, list: [], i: 0, rows: [], cur: null, side: null, playedAt: 0};
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+const fsides = () => $('fside').checked;
+function fplay(k, side) { send('play?u=' + side + '&e=' + fx(k)); }
+async function feelLearn() {
+  if (!connected) { $('fnow').textContent = 'connect the shoes first'; return; }
+  const ks = [...document.querySelectorAll('.finc:checked')].map(c => c.value);
+  for (const k of ks) {
+    $('fnow').textContent = FEEL[k][0] + ' (effect ' + fx(k) + ')';
+    fplay(k, k == 'arrive' || k == 'lost' ? 'B' : 'R'); await sleepMs(2200);
+  }
+  $('fnow').textContent = 'Ready when you are: press Start test';
+}
+function feelStart() {
+  if (!connected) { $('fnow').textContent = 'connect the shoes first'; return; }
+  const ks = [...document.querySelectorAll('.finc:checked')].map(c => c.value), n = Number($('frep').value) || 5;
+  ft.list = []; ks.forEach(k => { for (let i = 0; i < n; i++) ft.list.push(k); });
+  for (let i = ft.list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [ft.list[i], ft.list[j]] = [ft.list[j], ft.list[i]]; }
+  ft.on = true; ft.i = 0; ft.pid = $('fpid').value || 'P?'; ft.ks = ks;
+  ft.drive = document.querySelector('input[name=ol]:checked') ? (document.querySelector('input[name=ol]:checked').value == 1 ? 'open loop ' + $('of').value + ' Hz' : 'closed loop') : '?';
+  log('Feel test started: ' + ft.pid + ', ' + ft.list.length + ' trials, ' + ft.drive);
+  feelNext();
+}
+function feelStop() { ft.on = false; $('fans').innerHTML = ''; $('fnow').textContent = 'stopped'; feelSummary(); }
+async function feelNext() {
+  if (!ft.on) return;
+  if (ft.i >= ft.list.length) { ft.on = false; $('fans').innerHTML = ''; $('fnow').textContent = 'Done'; feelSummary(); return; }
+  const k = ft.list[ft.i];
+  ft.cur = k; ft.side = k == 'arrive' || k == 'lost' ? 'B' : Math.random() < 0.5 ? 'L' : 'R';
+  ft.ansK = null; ft.ansS = null;
+  $('fans').innerHTML = '';
+  $('fnow').textContent = (ft.i + 1) + ' / ' + ft.list.length + ' ...';
+  await sleepMs(800 + Math.random() * 1200);           // random wait, so it can't be anticipated
+  if (!ft.on) return;
+  fplay(k, ft.side); ft.playedAt = performance.now();
+  $('fnow').textContent = (ft.i + 1) + ' / ' + ft.list.length + ': what was it?';
+  $('fans').innerHTML = ft.ks.map(x => '<button data-k="' + x + '">' + FEEL[x][0] + '</button>').join('') +
+    '<button data-k="?" class="wide">Not sure / didn\'t feel it</button>';
+  $('fans').querySelectorAll('button').forEach(b => b.onclick = () => feelAnswer(b.dataset.k));
+}
+function feelAnswer(k) {
+  if (ft.ansK == null) {
+    ft.ansK = k; ft.rt = Math.round(performance.now() - ft.playedAt);
+    if (fsides() && ft.side != 'B' && k != '?') {
+      $('fnow').textContent = 'Which shoe?';
+      $('fans').innerHTML = '<button data-k="L">Left</button><button data-k="R">Right</button><button data-k="B" class="wide">Both / not sure</button>';
+      $('fans').querySelectorAll('button').forEach(b => b.onclick = () => { ft.ansS = b.dataset.k; feelRecord(); });
+      return;
+    }
+  }
+  feelRecord();
+}
+function feelRecord() {
+  const r = {pid: ft.pid, trial: ft.i + 1, played: ft.cur, effect: fx(ft.cur), shoe: ft.side, answer: ft.ansK,
+             correct: ft.ansK == ft.cur ? 1 : 0, shoeAnswer: ft.ansS || '', shoeCorrect: ft.ansS ? (ft.ansS == ft.side ? 1 : 0) : '',
+             rt: ft.rt, drive: ft.drive, time: new Date().toISOString()};
+  ft.rows.push(r); ft.i++;
+  $('fnow').textContent = ''; feelNext();
+}
+function feelSummary() {
+  const rows = ft.rows.filter(r => r.pid == ft.pid);
+  if (!rows.length) return;
+  const ORDER = Object.keys(FEEL), SHORT = {far: 'far', mid: '1m', near: 'close', arrive: 'step', drop: 'drop', lost: 'lost', '?': 'unsure'};
+  const ks = ORDER.filter(k => rows.some(r => r.played == k)), cols = ks.concat(['?']);
+  const pad = (t, n) => String(t).padStart(n);
+  let out = ft.pid + ' (' + ft.drive + '): ' + rows.filter(r => r.correct).length + ' / ' + rows.length + ' right (' +
+    Math.round(100 * rows.filter(r => r.correct).length / rows.length) + ' %), median answer time ' +
+    (rows.map(r => r.rt).sort((a, b) => a - b)[Math.floor(rows.length / 2)] / 1000).toFixed(1) + ' s\n';
+  const sr = rows.filter(r => r.shoeAnswer);
+  if (sr.length) out += 'Which shoe: ' + sr.filter(r => r.shoeCorrect).length + ' / ' + sr.length + ' right\n';
+  out += '\nrows = played, columns = answered\n' + pad('', 6) + cols.map(c => pad(SHORT[c], 7)).join('') + '  right\n';
+  ks.forEach(k => {
+    const rr = rows.filter(r => r.played == k);
+    out += pad(SHORT[k], 6) + cols.map(c => pad(rr.filter(r => r.answer == c).length || '.', 7)).join('') +
+      pad(Math.round(100 * rr.filter(r => r.correct).length / rr.length) + '%', 7) + '\n';
+  });
+  $('fres').textContent = out;
+  log('Feel test ' + out.split('\n')[0]);
+}
+function feelSave() {
+  const keys = ['pid', 'trial', 'played', 'effect', 'shoe', 'answer', 'correct', 'shoeAnswer', 'shoeCorrect', 'rt', 'drive', 'time'];
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([keys.join(',') + '\n' + ft.rows.map(r => keys.map(k => r[k]).join(',')).join('\n') + '\n'], {type: 'text/csv'}));
+  a.download = 'safestride_feel_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.csv';
+  a.click();
+}
 
 function detShoe(j) {              // what the shoe says back
   det.hz = j.hz || null;
