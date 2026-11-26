@@ -140,6 +140,16 @@ label{display:block;margin:6px 0;font-size:17px}
 
 <!-- ============ Steps: check and tune step detection ============ -->
 <div id="p5" style="display:none">
+<div class="box"><b>Live graph</b>
+<label><input type="checkbox" id="gron"> Show</label>
+<button id="grpause" onclick="grPause()">Pause</button>
+<button onclick="grSave()">save CSV</button>
+<span id="grst" class="dim"></span>
+<canvas id="graph" style="width:100%;height:380px;display:block;margin-top:6px"></canvas>
+<div class="dim">100 samples a second from each shoe, last 8 s. Top: rotation speed |gyro|, with the swing (red) and foot-flat (green)
+thresholds. Bottom: |a|, with the foot-flat band around 1 g. Solid line = counted step, x = near miss. Left blue, right orange.</div>
+</div>
+
 <div class="box"><b>Each step</b>
 <table>
 <tr><th></th><th>Left</th><th>Right</th></tr>
@@ -330,6 +340,11 @@ async function openGatt() {
   const server = await dev.gatt.connect();
   const svc = await server.getPrimaryService(SVC);
   for (const k in UUIDS) ch[k] = await svc.getCharacteristic(UUIDS[k]);
+  try {
+    ch.tr = await svc.getCharacteristic(U('15'));
+    ch.tr.addEventListener('characteristicvaluechanged', onTrace);
+    await ch.tr.startNotifications();
+  } catch (e) { ch.tr = null; }
   loadCfg(JSON.parse(dec.decode(await ch.cfg.readValue())));
   $('chk').textContent = dec.decode(await ch.chk.readValue());
   connected = true;
@@ -337,6 +352,7 @@ async function openGatt() {
   log(shoe.R.state == 'asleep' ? 'Right awake again, reconnected' : 'Connected');
   $('conn').textContent = 'Reconnect';
   poll();
+  if ($('gron').checked) send('trace?on=1');
 }
 function onDisconnect() {
   if (connected && shoe.R.state != 'asleep') log('Connection lost');
@@ -615,6 +631,78 @@ function ctRecord() {
     Math.round(100 * got / real) + ' %, near misses ' + (m('L') + m('R')) + '  [' + stDesc() + ']';
   log(line); $('ctres').textContent = line; ct.on = false;
 }
+
+// ---- live graph ----
+const GR = {win: 8000, keep: 60000, data: {L: [], R: []}, paused: false, pauseAt: 0, col: {L: '#4aa3ff', R: '#ff9a3c'}};
+function onTrace(e) {
+  const v = new Uint8Array(e.target.value.buffer), foot = String.fromCharCode(v[1]);
+  if (v.length < 26 || v[0] != 71 || !GR.data[foot]) return;
+  const t0 = performance.now(), d = GR.data[foot];
+  for (let i = 0; i < 10; i++) {
+    const bit = (o) => (v[o + (i >> 3)] >> (i & 7)) & 1;
+    d.push({t: t0 - (9 - i) * 10, g: v[6 + i] * 2, a: v[16 + i] / 40, s: bit(2), n: bit(4)});
+  }
+  while (d.length && d[0].t < t0 - GR.keep) d.shift();
+  $('grst').textContent = '';
+}
+$('gron').onchange = () => {
+  if ($('gron').checked && connected && !ch.tr) $('grst').textContent = 'shoes need the new firmware for this';
+  send('trace?on=' + ($('gron').checked ? 1 : 0));
+};
+function grPause() { GR.paused = !GR.paused; GR.pauseAt = performance.now(); $('grpause').textContent = GR.paused ? 'Resume' : 'Pause'; }
+function grSave() {
+  const rows = [];
+  ['L', 'R'].forEach(f => GR.data[f].forEach(p => rows.push([Math.round(p.t), SIDES[f], p.g, p.a.toFixed(3), p.s, p.n])));
+  rows.sort((x, y) => x[0] - y[0]);
+  const t0 = rows.length ? rows[0][0] : 0;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob(['# ' + stDesc() + '\ntime_ms,foot,gyro_dps,acc_g,step,near_miss\n' +
+    rows.map(r => [r[0] - t0].concat(r.slice(1)).join(',')).join('\n') + '\n'], {type: 'text/csv'}));
+  a.download = 'safestride_trace_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.csv';
+  a.click();
+}
+function drawGraph() {
+  requestAnimationFrame(drawGraph);
+  const c = $('graph');
+  if (!c.offsetParent || !$('gron').checked) return;           // tab hidden or graph off
+  const dpr = window.devicePixelRatio || 1, W = c.clientWidth, H = c.clientHeight;
+  if (c.width != Math.round(W * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+  const x = c.getContext('2d'); x.setTransform(dpr, 0, 0, dpr, 0, 0); x.clearRect(0, 0, W, H);
+  const tEnd = GR.paused ? GR.pauseAt : performance.now(), tStart = tEnd - GR.win;
+  const L = 44, R = W - 6, gTop = 8, gBot = H * 0.6 - 12, aTop = H * 0.6 + 6, aBot = H - 18;
+  const gMax = 500, aMin = 0, aMax = 3;
+  const tx = t => L + (t - tStart) / GR.win * (R - L);
+  const gy = g => gBot - Math.min(g, gMax) / gMax * (gBot - gTop);
+  const ay = a => aBot - (Math.max(aMin, Math.min(a, aMax)) - aMin) / (aMax - aMin) * (aBot - aTop);
+  x.font = '11px sans-serif'; x.lineWidth = 1;
+  // axes and grid
+  x.strokeStyle = '#333'; x.fillStyle = '#888';
+  [0, 100, 200, 300, 400, 500].forEach(g => { x.beginPath(); x.moveTo(L, gy(g)); x.lineTo(R, gy(g)); x.stroke(); x.fillText(g, 4, gy(g) + 4); });
+  [0, 1, 2, 3].forEach(a => { x.beginPath(); x.moveTo(L, ay(a)); x.lineTo(R, ay(a)); x.stroke(); x.fillText(a + ' g', 4, ay(a) + 4); });
+  x.fillText('|gyro| deg/s', L + 4, gTop + 10); x.fillText('|a|', L + 4, aTop + 10);
+  for (let s = 0; s <= GR.win / 1000; s++) { const t = tEnd - s * 1000; x.fillText('-' + s + ' s', tx(t) - 10, H - 4); }
+  // thresholds
+  const sw = Number($('sw').value), stv = Number($('st').value), sg = Number($('stg').value);
+  x.fillStyle = 'rgba(40,170,80,0.15)'; x.fillRect(L, ay(1 + sg), R - L, ay(1 - sg) - ay(1 + sg));
+  x.setLineDash([5, 4]);
+  x.strokeStyle = '#e04040'; x.beginPath(); x.moveTo(L, gy(sw)); x.lineTo(R, gy(sw)); x.stroke();
+  x.strokeStyle = '#2a5'; x.beginPath(); x.moveTo(L, gy(stv)); x.lineTo(R, gy(stv)); x.stroke();
+  x.setLineDash([]);
+  // traces, step lines and near misses
+  ['L', 'R'].forEach(f => {
+    const d = GR.data[f].filter(p => p.t >= tStart && p.t <= tEnd);
+    x.strokeStyle = GR.col[f]; x.lineWidth = 1.5;
+    [[gy, 'g'], [ay, 'a']].forEach(([fy, k]) => {
+      x.beginPath(); d.forEach((p, i) => { const X = tx(p.t), Y = fy(p[k]); i && p.t - d[i - 1].t < 60 ? x.lineTo(X, Y) : x.moveTo(X, Y); }); x.stroke();
+    });
+    x.lineWidth = 2;
+    d.forEach(p => {
+      if (p.s) { x.globalAlpha = 0.6; x.lineWidth = 1; x.beginPath(); x.moveTo(tx(p.t), gTop); x.lineTo(tx(p.t), aBot); x.stroke(); x.globalAlpha = 1; x.lineWidth = 2; }
+      if (p.n) { const X = tx(p.t), Y = gy(sw) - 8; x.beginPath(); x.moveTo(X - 5, Y - 5); x.lineTo(X + 5, Y + 5); x.moveTo(X + 5, Y - 5); x.lineTo(X - 5, Y + 5); x.stroke(); }
+    });
+  });
+}
+requestAnimationFrame(drawGraph);
 
 function detShoe(j) {              // what the shoe says back
   det.hz = j.hz || null;
