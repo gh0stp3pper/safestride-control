@@ -147,7 +147,7 @@ label{display:block;margin:6px 0;font-size:17px}
 <span id="grst" class="dim"></span>
 <canvas id="graph" style="width:100%;height:380px;display:block;margin-top:6px"></canvas>
 <div class="dim">100 samples a second from each shoe, last 8 s. Top: rotation speed |gyro|, with the swing (red) and foot-flat (green)
-thresholds. Bottom: |a|, with the foot-flat band around 1 g. Solid line = counted step, x = near miss. Left blue, right orange.</div>
+thresholds. Bottom: |a|, with the foot-flat band around 1 g (and the landing threshold in red, if on). Solid line = counted step, x = near miss. Left blue, right orange.</div>
 </div>
 
 <div class="box"><b>Each step</b>
@@ -158,6 +158,7 @@ thresholds. Bottom: |a|, with the foot-flat band around 1 g. Solid line = counte
 <tr><td>Swing to flat</td><td id="Lssw"></td><td id="Rssw"></td></tr>
 <tr><td>Near misses</td><td id="Lsnm"></td><td id="Rsnm"></td></tr>
 <tr><td class="dim">last near miss</td><td id="Lsnl" class="dim"></td><td id="Rsnl" class="dim"></td></tr>
+<tr><td class="dim">of which no landing</td><td id="Lsni" class="dim"></td><td id="Rsni" class="dim"></td></tr>
 </table>
 <div class="dim">Swing peak = fastest foot rotation in the step (deg/s). A near miss is a movement that got over 70 % of the
 swing threshold but wasn't counted: too weak, or not over the threshold for long enough. Lots of near misses on real steps
@@ -174,15 +175,21 @@ swing threshold but wasn't counted: too weak, or not over the threshold for long
 
 <div class="box"><b>Detection settings</b> <span class="dim">(both shoes, saved on the shoes)</span>
 <table>
+<tr><td>Rotation counted</td><td><select id="sm"><option value="0">all rotation (original)</option><option value="1">ignore turning on the spot</option></select></td></tr>
 <tr><td>Swing faster than</td><td><input id="sw" type="number" step="10" min="50" max="500" value="150" style="width:5em"> deg/s</td></tr>
 <tr><td>... for at least</td><td><input id="swm" type="number" step="10" min="20" max="300" value="100" style="width:5em"> ms</td></tr>
 <tr><td>Then foot flat: slower than</td><td><input id="st" type="number" step="5" min="5" max="150" value="40" style="width:5em"> deg/s</td></tr>
 <tr><td>... and |a| within</td><td><input id="stg" type="number" step="0.01" min="0.03" max="0.5" value="0.15" style="width:5em"> g of 1 g</td></tr>
 <tr><td>... for at least</td><td><input id="stm" type="number" step="10" min="20" max="300" value="80" style="width:5em"> ms</td></tr>
+<tr><td>Landing: |a| peak at least</td><td><input id="si" type="number" step="0.1" min="0" max="5" value="0" style="width:5em"> g (0 = off)</td></tr>
 </table>
+<div id="smwarn" style="color:#e8c040"></div>
+<div class="dim">"Ignore turning" drops rotation about the vertical (pivoting, turning on the spot) and keeps the forward swing.
+It needs "Set level" done on that shoe (IMU tab, shoe flat and still); without it the shoe uses all rotation.
+"Landing" rejects swings with no impact when the foot comes down; these show as near misses.</div>
 <button onclick="stDefaults()">Back to original settings</button>
-<div class="dim">Original settings (from the 29 Oct walk with the bare board): 150 deg/s for 100 ms, then below 40 deg/s and
-within 0.15 g for 80 ms.</div>
+<div class="dim">Original settings (from the 29 Oct walk with the bare board): all rotation, 150 deg/s for 100 ms, then below
+40 deg/s and within 0.15 g for 80 ms, no landing check.</div>
 </div>
 
 <div class="box"><b>Step list</b> <button onclick="stSave()">save CSV</button> <button onclick="stClear()">clear</button>
@@ -385,7 +392,7 @@ function loadCfg(c) {
   $('se').value = c.se; $('sd').value = c.sd; $('sl').value = c.sl; $('side').value = c.side;
   $('ef').value = c.ef; $('em').value = c.em; $('en').value = c.en; $('ea').value = c.ea; if (c.ed != null) $('ed').value = c.ed;
   $('ka').checked = !!c.ka;
-  if (c.sw != null) ST_KEYS.forEach(k => $(k).value = c[k]);
+  ST_KEYS.forEach(k => { if (c[k] != null) $(k).value = c[k]; });
   if (c.az != null) { $('az').value = String(Number(c.az)); $('sb').value = c.sb; }
   $('dside').value = c.side == 3 ? 3 : 0;
   if (c.ol != null) { document.querySelector('input[name=ol][value="' + c.ol + '"]').checked = true; $('of').value = c.of; }
@@ -394,10 +401,11 @@ document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => se
 ['se','sd','sl','side','ef','em','en','ea','ed'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
 document.querySelectorAll('input[name=ol]').forEach(e => e.onchange = () => { send('config?ol=' + e.value); log('Motor drive: ' + (e.value == 1 ? 'open loop ' + $('of').value + ' Hz' : 'closed loop')); });
 $('of').onchange = () => send('config?of=' + $('of').value);
-const ST_KEYS = ['sw', 'swm', 'st', 'stg', 'stm'], ST_DEF = {sw: 150, swm: 100, st: 40, stg: 0.15, stm: 80};
+const ST_KEYS = ['sm', 'sw', 'swm', 'st', 'stg', 'stm', 'si'], ST_DEF = {sm: 0, sw: 150, swm: 100, st: 40, stg: 0.15, stm: 80, si: 0};
 ST_KEYS.forEach(k => $(k).onchange = () => { send('config?' + k + '=' + $(k).value); log('Step detection: ' + stDesc()); });
-const stDesc = () => 'swing > ' + $('sw').value + ' deg/s for ' + $('swm').value + ' ms, flat < ' + $('st').value +
-  ' deg/s within ' + $('stg').value + ' g for ' + $('stm').value + ' ms';
+const stDesc = () => ($('sm').value == 1 ? 'ignore turning, ' : 'all rotation, ') + 'swing > ' + $('sw').value + ' deg/s for ' + $('swm').value + ' ms, flat < ' + $('st').value +
+  ' deg/s within ' + $('stg').value + ' g for ' + $('stm').value + ' ms' +
+  (Number($('si').value) > 0 ? ', landing > ' + $('si').value + ' g' : '');
 function stDefaults() {
   ST_KEYS.forEach(k => $(k).value = ST_DEF[k]);
   send('config?' + ST_KEYS.map(k => k + '=' + ST_DEF[k]).join('&'));
@@ -425,7 +433,7 @@ function parse(csv) {
   return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
           t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19],
           sl: v[20], mw: v[21], bw: v[22], ts: v[23],
-          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28]};   // step diagnostics (newer firmware only)
+          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28], ni: v[29]};   // step diagnostics (newer firmware only)
 }
 const lastSteps = {L: null, R: null}, prev = {L: null, R: null};
 function live(p, u) {        // awake data for one shoe
@@ -593,6 +601,10 @@ function stepsTab(p, u) {
   $(p + 'ssw').textContent = u.sws ? u.sws + ' ms' : '-';
   $(p + 'snm').textContent = u.nm;
   $(p + 'snl').textContent = u.nm ? u.np + ' deg/s, ' + u.na + ' ms over' : '';
+  $(p + 'sni').textContent = isNaN(u.ni) ? '' : u.ni;
+  const nolev = ['L', 'R'].filter(f => st[f] && !st[f].lv).concat(u.lv ? [] : [p]).filter((f, i, a) => a.indexOf(f) == i);
+  $('smwarn').textContent = $('sm').value == 1 && nolev.length ? 'Level not set on ' + nolev.map(f => SIDES[f]).join(' and ') +
+    ' - that shoe still uses all rotation. Set level on the IMU tab.' : '';
   if (!q) return;
   const t = new Date().toLocaleTimeString();
   if (u.steps > q.steps) stRow([t, SIDES[p], 'step', u.pk, u.sws, u.si]);
@@ -679,7 +691,7 @@ function drawGraph() {
   x.strokeStyle = '#333'; x.fillStyle = '#888';
   [0, 100, 200, 300, 400, 500].forEach(g => { x.beginPath(); x.moveTo(L, gy(g)); x.lineTo(R, gy(g)); x.stroke(); x.fillText(g, 4, gy(g) + 4); });
   [0, 1, 2, 3].forEach(a => { x.beginPath(); x.moveTo(L, ay(a)); x.lineTo(R, ay(a)); x.stroke(); x.fillText(a + ' g', 4, ay(a) + 4); });
-  x.fillText('|gyro| deg/s', L + 4, gTop + 10); x.fillText('|a|', L + 4, aTop + 10);
+  x.fillText($('sm').value == 1 ? 'rotation without turning, deg/s' : '|gyro| deg/s', L + 4, gTop + 10); x.fillText('|a|', L + 4, aTop + 10);
   for (let s = 0; s <= GR.win / 1000; s++) { const t = tEnd - s * 1000; x.fillText('-' + s + ' s', tx(t) - 10, H - 4); }
   // thresholds
   const sw = Number($('sw').value), stv = Number($('st').value), sg = Number($('stg').value);
@@ -687,6 +699,8 @@ function drawGraph() {
   x.setLineDash([5, 4]);
   x.strokeStyle = '#e04040'; x.beginPath(); x.moveTo(L, gy(sw)); x.lineTo(R, gy(sw)); x.stroke();
   x.strokeStyle = '#2a5'; x.beginPath(); x.moveTo(L, gy(stv)); x.lineTo(R, gy(stv)); x.stroke();
+  const imp = Number($('si').value);
+  if (imp > 0) { x.strokeStyle = '#e04040'; x.beginPath(); x.moveTo(L, ay(imp)); x.lineTo(R, ay(imp)); x.stroke(); }
   x.setLineDash([]);
   // traces, step lines and near misses
   ['L', 'R'].forEach(f => {
