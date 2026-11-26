@@ -38,7 +38,7 @@ label{display:block;margin:6px 0;font-size:17px}
 
 <div class="tabs">
   <button id="conn" onclick="connect()">Connect</button>
-  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button><button id="t4" onclick="tab(4)">Detector</button>
+  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button><button id="t4" onclick="tab(4)">Detector</button><button id="t5" onclick="tab(5)">Steps</button>
 </div>
 <div id="st" style="margin-top:6px">not connected</div>
 <div id="nobt" class="warn" style="display:none;margin-top:8px"></div>
@@ -138,6 +138,48 @@ label{display:block;margin:6px 0;font-size:17px}
 <pre id="chk"></pre>
 </div>
 
+<!-- ============ Steps: check and tune step detection ============ -->
+<div id="p5" style="display:none">
+<div class="box"><b>Each step</b>
+<table>
+<tr><th></th><th>Left</th><th>Right</th></tr>
+<tr><td>Steps</td><td id="Lsn"></td><td id="Rsn"></td></tr>
+<tr><td>Swing peak</td><td id="Lspk"></td><td id="Rspk"></td></tr>
+<tr><td>Swing to flat</td><td id="Lssw"></td><td id="Rssw"></td></tr>
+<tr><td>Near misses</td><td id="Lsnm"></td><td id="Rsnm"></td></tr>
+<tr><td class="dim">last near miss</td><td id="Lsnl" class="dim"></td><td id="Rsnl" class="dim"></td></tr>
+</table>
+<div class="dim">Swing peak = fastest foot rotation in the step (deg/s). A near miss is a movement that got over 70 % of the
+swing threshold but wasn't counted: too weak, or not over the threshold for long enough. Lots of near misses on real steps
+= threshold too high. Steps counted while standing still or fidgeting = too low.</div>
+</div>
+
+<div class="box"><b>Count test</b>
+<div>Press Start, walk a set number of steps, then enter how many you actually took (both feet) and press Record.</div>
+<button onclick="ctStart()">Start</button>
+<span id="ctnow" class="mono"></span>
+<div>Actual steps <input id="ctreal" type="number" min="1" style="width:5em"> <button onclick="ctRecord()">Record</button></div>
+<div id="ctres" class="mono"></div>
+</div>
+
+<div class="box"><b>Detection settings</b> <span class="dim">(both shoes, saved on the shoes)</span>
+<table>
+<tr><td>Swing faster than</td><td><input id="sw" type="number" step="10" min="50" max="500" value="150" style="width:5em"> deg/s</td></tr>
+<tr><td>... for at least</td><td><input id="swm" type="number" step="10" min="20" max="300" value="100" style="width:5em"> ms</td></tr>
+<tr><td>Then foot flat: slower than</td><td><input id="st" type="number" step="5" min="5" max="150" value="40" style="width:5em"> deg/s</td></tr>
+<tr><td>... and |a| within</td><td><input id="stg" type="number" step="0.01" min="0.03" max="0.5" value="0.15" style="width:5em"> g of 1 g</td></tr>
+<tr><td>... for at least</td><td><input id="stm" type="number" step="10" min="20" max="300" value="80" style="width:5em"> ms</td></tr>
+</table>
+<button onclick="stDefaults()">Back to original settings</button>
+<div class="dim">Original settings (from the 29 Oct walk with the bare board): 150 deg/s for 100 ms, then below 40 deg/s and
+within 0.15 g for 80 ms.</div>
+</div>
+
+<div class="box"><b>Step list</b> <button onclick="stSave()">save CSV</button> <button onclick="stClear()">clear</button>
+<pre id="stlist" class="mono" style="max-height:260px;overflow:auto"></pre>
+</div>
+</div>
+
 <!-- ============ Detector (simulated) ============ -->
 <div id="p4" style="display:none">
 <div class="box"><b>Simulated detector</b>
@@ -186,7 +228,7 @@ const EFFECTS = [[0,'none'],[1,'Strong click 100%'],[2,'Strong click 60%'],[3,'S
   if (id === 'te' && !n) return;
   const o = document.createElement('option'); o.value = n; o.textContent = n ? n + ' ' + t : t; $(id).appendChild(o);
 }));
-function tab(n) { [1, 2, 3, 4].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
+function tab(n) { [1, 2, 3, 4, 5].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
 
 if (!navigator.bluetooth) {
   $('nobt').style.display = '';
@@ -327,6 +369,7 @@ function loadCfg(c) {
   $('se').value = c.se; $('sd').value = c.sd; $('sl').value = c.sl; $('side').value = c.side;
   $('ef').value = c.ef; $('em').value = c.em; $('en').value = c.en; $('ea').value = c.ea; if (c.ed != null) $('ed').value = c.ed;
   $('ka').checked = !!c.ka;
+  if (c.sw != null) ST_KEYS.forEach(k => $(k).value = c[k]);
   if (c.az != null) { $('az').value = String(Number(c.az)); $('sb').value = c.sb; }
   $('dside').value = c.side == 3 ? 3 : 0;
   if (c.ol != null) { document.querySelector('input[name=ol][value="' + c.ol + '"]').checked = true; $('of').value = c.of; }
@@ -335,6 +378,15 @@ document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => se
 ['se','sd','sl','side','ef','em','en','ea','ed'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
 document.querySelectorAll('input[name=ol]').forEach(e => e.onchange = () => { send('config?ol=' + e.value); log('Motor drive: ' + (e.value == 1 ? 'open loop ' + $('of').value + ' Hz' : 'closed loop')); });
 $('of').onchange = () => send('config?of=' + $('of').value);
+const ST_KEYS = ['sw', 'swm', 'st', 'stg', 'stm'], ST_DEF = {sw: 150, swm: 100, st: 40, stg: 0.15, stm: 80};
+ST_KEYS.forEach(k => $(k).onchange = () => { send('config?' + k + '=' + $(k).value); log('Step detection: ' + stDesc()); });
+const stDesc = () => 'swing > ' + $('sw').value + ' deg/s for ' + $('swm').value + ' ms, flat < ' + $('st').value +
+  ' deg/s within ' + $('stg').value + ' g for ' + $('stm').value + ' ms';
+function stDefaults() {
+  ST_KEYS.forEach(k => $(k).value = ST_DEF[k]);
+  send('config?' + ST_KEYS.map(k => k + '=' + ST_DEF[k]).join('&'));
+  log('Step detection back to original: ' + stDesc());
+}
 $('az').onchange = () => { send('config?az=' + $('az').value); log('Alerts start at ' + $('az').value + ' m'); };
 $('sb').onchange = () => { send('config?sb=' + $('sb').value); log('Side hazards: ' + $('sb').selectedOptions[0].text); };
 $('dside').onchange = () => { $('side').value = $('dside').value; send('config?side=' + $('dside').value); log('Hazard ahead: buzz ' + $('dside').selectedOptions[0].text); };
@@ -356,7 +408,8 @@ function parse(csv) {
   const v = csv.split(',').map(Number);
   return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
           t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19],
-          sl: v[20], mw: v[21], bw: v[22], ts: v[23]};
+          sl: v[20], mw: v[21], bw: v[22], ts: v[23],
+          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28]};   // step diagnostics (newer firmware only)
 }
 const lastSteps = {L: null, R: null}, prev = {L: null, R: null};
 function live(p, u) {        // awake data for one shoe
@@ -373,6 +426,7 @@ function live(p, u) {        // awake data for one shoe
   $(p + 'steps').textContent = u.steps;
   $(p + 'int').textContent = u.si ? (u.si / 1000).toFixed(2) + ' s between steps' : '';
   if (lastSteps[p] !== null && u.steps > lastSteps[p]) { $(p + 'steps').classList.add('flash'); setTimeout(() => $(p + 'steps').classList.remove('flash'), 200); }
+  stepsTab(p, u);
   lastSteps[p] = u.steps;
   detSteps(p, u.steps);
   // IMU tab
@@ -507,10 +561,61 @@ const trueDist = () => det.start - det.walked * stepLen();
 
 function detSteps(p, n) {          // each shoe's step count, from the polled state
   const last = det.lastSteps[p]; det.lastSteps[p] = n;
-  if (last == null || n <= last) return;          // first reading, or the count was reset
+  if (last == null || n == last) return;          // first reading, or no new step
+  const add = n > last ? n - last : n;            // count went down = shoe was reset: the steps since then still count
+  if (!add) return;
   det.stepAt[p] = Date.now();
-  if (det.on) det.walked += n - last;
+  if (det.on) det.walked += add;
 }
+// ---- Steps tab ----
+const st = {L: null, R: null}, stRows = [], ct = {on: false, base: {}, nm: {}};
+function stepsTab(p, u) {
+  if (u.pk == null || isNaN(u.pk)) { $(p + 'spk').textContent = 'needs new firmware'; return; }
+  const q = st[p]; st[p] = u;
+  $(p + 'sn').textContent = u.steps;
+  $(p + 'spk').textContent = u.pk ? u.pk + ' deg/s' : '-';
+  $(p + 'ssw').textContent = u.sws ? u.sws + ' ms' : '-';
+  $(p + 'snm').textContent = u.nm;
+  $(p + 'snl').textContent = u.nm ? u.np + ' deg/s, ' + u.na + ' ms over' : '';
+  if (!q) return;
+  const t = new Date().toLocaleTimeString();
+  if (u.steps > q.steps) stRow([t, SIDES[p], 'step', u.pk, u.sws, u.si]);
+  if (u.nm > q.nm) stRow([t, SIDES[p], 'near miss', u.np, u.na, '']);
+  if (ct.on) {
+    const n = f => st[f] && ct.base[f] != null ? st[f].steps - ct.base[f] : 0, m = f => st[f] && ct.nm[f] != null ? st[f].nm - ct.nm[f] : 0;
+    $('ctnow').textContent = 'counted L ' + n('L') + ' + R ' + n('R') + ' = ' + (n('L') + n('R')) + ', near misses ' + (m('L') + m('R'));
+  }
+}
+function stRow(r) {   // time, foot, kind, peak deg/s, ms (swing-to-flat for a step, time over threshold for a near miss), interval ms
+  stRows.push(r); if (stRows.length > 2000) stRows.shift();
+  $('stlist').textContent = stRows.slice(-60).reverse().map(x =>
+    x[0] + '  ' + x[1].padEnd(5) + ' ' + x[2].padEnd(9) + ' ' + String(x[3]).padStart(4) + ' deg/s  ' + String(x[4]).padStart(4) + ' ms' +
+    (x[5] ? '  ' + (x[5] / 1000).toFixed(2) + ' s since last' : '')).join('\n');
+}
+function stSave() {
+  const a = document.createElement('a');
+  const head = '# ' + stDesc() + '\ntime,foot,kind,peak_dps,ms,interval_ms\n';
+  a.href = URL.createObjectURL(new Blob([head + stRows.map(r => r.join(',')).join('\n') + '\n'], {type: 'text/csv'}));
+  a.download = 'safestride_steps_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.csv';
+  a.click();
+}
+function stClear() { stRows.length = 0; $('stlist').textContent = ''; }
+function ctStart() {
+  ct.on = true;
+  ['L', 'R'].forEach(f => { ct.base[f] = st[f] ? st[f].steps : null; ct.nm[f] = st[f] ? st[f].nm : null; });
+  $('ctres').textContent = ''; $('ctnow').textContent = 'counting...';
+  log('Count test started (' + stDesc() + ')');
+}
+function ctRecord() {
+  const real = Number($('ctreal').value);
+  if (!ct.on || !real) return;
+  const n = f => st[f] && ct.base[f] != null ? st[f].steps - ct.base[f] : 0, m = f => st[f] && ct.nm[f] != null ? st[f].nm - ct.nm[f] : 0;
+  const got = n('L') + n('R');
+  const line = 'Count test: actual ' + real + ', counted ' + got + ' (L ' + n('L') + ', R ' + n('R') + '), ' +
+    Math.round(100 * got / real) + ' %, near misses ' + (m('L') + m('R')) + '  [' + stDesc() + ']';
+  log(line); $('ctres').textContent = line; ct.on = false;
+}
+
 function detShoe(j) {              // what the shoe says back
   det.hz = j.hz || null;
   if (!j.al || j.al == det.al) return;
