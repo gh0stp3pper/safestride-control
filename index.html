@@ -32,11 +32,13 @@ label{display:block;margin:6px 0;font-size:17px}
 .line{font-size:15px;margin:3px 0;color:#ccc}
 .small{font-size:13px;color:#999}
 .controls label{display:inline-block;margin:6px 12px 0 0;font-size:15px}
+#world{width:100%;max-width:420px;display:block;margin:8px auto;background:#0a0a0a;border-radius:8px}
+.mono{font-family:monospace;font-size:13px;color:#aaa;margin:2px 0;overflow-wrap:anywhere}
 </style></head><body>
 
 <div class="tabs">
   <button id="conn" onclick="connect()">Connect</button>
-  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button>
+  <button id="t1" class="on" onclick="tab(1)">Shoes</button><button id="t2" onclick="tab(2)">Alerts</button><button id="t3" onclick="tab(3)">IMU</button><button id="t4" onclick="tab(4)">Detector</button>
 </div>
 <div id="st" style="margin-top:6px">not connected</div>
 <div id="nobt" class="warn" style="display:none;margin-top:8px"></div>
@@ -72,6 +74,7 @@ label{display:block;margin:6px 0;font-size:17px}
 </div>
 
 <div class="box"><b>Log</b> <button onclick="logLines.length = 0; showLog()" style="font-size:13px;padding:4px 8px">clear</button>
+<button onclick="saveLog()" style="font-size:13px;padding:4px 8px">save</button>
 <pre id="log" style="max-height:260px;overflow:auto"></pre></div>
 </div>
 
@@ -81,7 +84,8 @@ label{display:block;margin:6px 0;font-size:17px}
 <label><input type="radio" name="mode" value="0"> Off</label>
 <label><input type="radio" name="mode" value="1"> Own step (each shoe buzzes when it lands)</label>
 <label><input type="radio" name="mode" value="2"> Both (every step buzzes both shoes)</label>
-<label><input type="radio" name="mode" value="3"> Approach (fake hazard)</label>
+<label><input type="radio" name="mode" value="3"> Approach (button starts a fake step 4 m away)</label>
+<label><input type="radio" name="mode" value="4"> Detector (hazard messages - see Detector tab)</label>
 <div>Step effect <select id="se"></select></div>
 </div>
 
@@ -90,17 +94,25 @@ label{display:block;margin:6px 0;font-size:17px}
 <div class="dim" id="aplast" style="text-align:center"></div>
 <div>Start <input id="sd" type="number" step="0.5" min="1"> m &nbsp; step <input id="sl" type="number" step="0.05" min="0.3"> m</div>
 <div>Buzz <select id="side"><option value="0">stepping foot</option><option value="1">left shoe</option><option value="2">right shoe</option><option value="3">both shoes</option></select></div>
-<div>1.5&ndash;1.0 m <select id="ef"></select></div>
+<div>Far (start&ndash;1.0 m) <select id="ef"></select></div>
 <div>1.0&ndash;0.5 m <select id="em"></select></div>
 <div>&lt; 0.5 m <select id="en"></select></div>
 <div>Arrived <select id="ea"></select></div>
+<div>Drop (detector mode) <select id="ed"></select></div>
 <button onclick="send('approach?go=1')">Start</button><button onclick="send('approach?go=0')">Stop</button>
-<div class="dim">Or press the button on either shoe to start. Silent above 1.5 m.</div>
+<div class="dim">Or press the button on either shoe to start. Silent until inside the alert start distance (Detector tab, 1.5 m unless changed).</div>
 </div>
 
 <div class="box"><b>Try an effect</b><br>
 <select id="te"></select><br>
 <button onclick="tryE('L')">Left</button><button onclick="tryE('R')">Right</button><button onclick="tryE('B')">Both</button>
+</div>
+
+<div class="box"><b>Motor drive</b> (both shoes)
+<label><input type="radio" name="ol" value="0"> Closed loop - driver finds the motor's resonance (normal)</label>
+<label><input type="radio" name="ol" value="1"> Open loop - fixed frequency</label>
+<div>Frequency <input id="of" type="number" min="140" max="210" step="5"> Hz <span class="dim">(VG2080001 is rated 175 Hz)</span></div>
+<div class="dim">Open loop drives at about the motor's rated 1.8 V rms. Use "Try an effect" to compare.</div>
 </div>
 </div>
 
@@ -126,6 +138,37 @@ label{display:block;margin:6px 0;font-size:17px}
 <pre id="chk"></pre>
 </div>
 
+<!-- ============ Detector (simulated) ============ -->
+<div id="p4" style="display:none">
+<div class="box"><b>Simulated detector</b>
+<div class="dim">Stands in for a real step sensor and sends the shoes the same messages one would.</div>
+<svg id="world" viewBox="0 0 300 430"></svg>
+<div id="detline" class="mono"></div>
+<div id="shoeline" class="mono"></div>
+<div>Scenario <select id="scen">
+ <option value="up">Step up ahead</option>
+ <option value="drop">Drop ahead</option>
+ <option value="left">Step up on the left</option>
+ <option value="right">Step up on the right</option>
+ <option value="dropout">Detector drops out near the step</option>
+ <option value="lowconf">Unsure detection (low confidence)</option>
+</select></div>
+<div>Start <input id="dstart" type="number" step="0.5" min="1" value="5"> m away</div>
+<div class="box" style="margin:6px 0"><b>How the shoes alert</b>
+<div>Alerts start at <select id="az"><option value="1.5">1.5 m</option><option value="2">2.0 m</option><option value="2.5">2.5 m</option><option value="3">3.0 m</option></select></div>
+<div>Hazard ahead: buzz <select id="dside"><option value="0">the stepping foot</option><option value="3">both shoes together</option></select></div>
+<div>Hazard to one side: buzz <select id="sb"><option value="0">that side only</option><option value="1">both shoes when under 0.5 m</option><option value="2">both shoes when under 1.0 m</option></select></div>
+<div class="dim">These are saved on the shoes. The first band (light buzz) runs from the start distance down to 1.0 m.</div>
+</div>
+<button id="detgo" onclick="detStart()">Start</button><button onclick="detStop()">Stop</button>
+<label><input type="checkbox" id="practice"> Practice without shoes (fake steps every 0.6 s)</label>
+<div>Sound <select id="sound"><option value="beep">Beeps</option><option value="voice">Voice</option><option value="both">Voice + beeps</option><option value="off">Off</option></select> <span class="dim">so the room can hear the alerts (left shoe = left speaker). Voice speaks when the alert level changes.</span></div>
+<div class="dim">Start puts the shoes in Detector mode. Walk or step in place: each step the shoes detect moves you one
+step length closer. The detector sends 5 messages a second, including "clear" when nothing is in range (4 m),
+so the shoes can tell a quiet path from a dead detector.</div>
+</div>
+</div>
+
 <script>
 const $ = id => document.getElementById(id);
 const U = n => '5a4e00' + n + '-7b3c-4d2a-9f10-5afe57d1de00';
@@ -139,11 +182,11 @@ const EFFECTS = [[0,'none'],[1,'Strong click 100%'],[2,'Strong click 60%'],[3,'S
  [15,'Alert 750 ms'],[16,'Alert 1000 ms'],[24,'Sharp tick 100%'],[47,'Buzz 100%'],[48,'Buzz 80%'],[49,'Buzz 60%'],
  [50,'Buzz 40%'],[51,'Buzz 20%'],[52,'Pulsing strong 100%'],[56,'Pulsing sharp 100%'],[58,'Transition click 100%'],
  [64,'Transition hum 100%'],[70,'Ramp down (long)'],[82,'Ramp up (long)']];
-['se','ef','em','en','ea','te'].forEach(id => EFFECTS.forEach(([n, t]) => {
+['se','ef','em','en','ea','ed','te'].forEach(id => EFFECTS.forEach(([n, t]) => {
   if (id === 'te' && !n) return;
   const o = document.createElement('option'); o.value = n; o.textContent = n ? n + ' ' + t : t; $(id).appendChild(o);
 }));
-function tab(n) { [1, 2, 3].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
+function tab(n) { [1, 2, 3, 4].forEach(i => { $('p' + i).style.display = i == n ? '' : 'none'; $('t' + i).className = i == n ? 'on' : ''; }); }
 
 if (!navigator.bluetooth) {
   $('nobt').style.display = '';
@@ -154,7 +197,13 @@ if (!navigator.bluetooth) {
 // ---------------- helpers ----------------
 const logLines = [];
 const now = () => new Date().toLocaleTimeString();
-function log(t) { logLines.unshift(now() + '  ' + t); if (logLines.length > 300) logLines.pop(); showLog(); }
+function log(t) { logLines.unshift(now() + '  ' + t); if (logLines.length > 2000) logLines.pop(); showLog(); }
+function saveLog() {   // for test evidence
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([logLines.slice().reverse().join('\n') + '\n'], {type: 'text/plain'}));
+  a.download = 'safestride_log_' + new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-') + '.txt';
+  a.click();
+}
 function showLog() { $('log').textContent = logLines.join('\n'); }
 const mmss = s => { s = Math.max(0, Math.floor(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
   return (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(s % 60).padStart(2, '0'); };
@@ -276,11 +325,19 @@ async function poll() {
 function loadCfg(c) {
   document.querySelector('input[name=mode][value="' + c.mode + '"]').checked = true;
   $('se').value = c.se; $('sd').value = c.sd; $('sl').value = c.sl; $('side').value = c.side;
-  $('ef').value = c.ef; $('em').value = c.em; $('en').value = c.en; $('ea').value = c.ea;
+  $('ef').value = c.ef; $('em').value = c.em; $('en').value = c.en; $('ea').value = c.ea; if (c.ed != null) $('ed').value = c.ed;
   $('ka').checked = !!c.ka;
+  if (c.az != null) { $('az').value = String(Number(c.az)); $('sb').value = c.sb; }
+  $('dside').value = c.side == 3 ? 3 : 0;
+  if (c.ol != null) { document.querySelector('input[name=ol][value="' + c.ol + '"]').checked = true; $('of').value = c.of; }
 }
 document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => send('config?mode=' + e.value));
-['se','sd','sl','side','ef','em','en','ea'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
+['se','sd','sl','side','ef','em','en','ea','ed'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
+document.querySelectorAll('input[name=ol]').forEach(e => e.onchange = () => { send('config?ol=' + e.value); log('Motor drive: ' + (e.value == 1 ? 'open loop ' + $('of').value + ' Hz' : 'closed loop')); });
+$('of').onchange = () => send('config?of=' + $('of').value);
+$('az').onchange = () => { send('config?az=' + $('az').value); log('Alerts start at ' + $('az').value + ' m'); };
+$('sb').onchange = () => { send('config?sb=' + $('sb').value); log('Side hazards: ' + $('sb').selectedOptions[0].text); };
+$('dside').onchange = () => { $('side').value = $('dside').value; send('config?side=' + $('dside').value); log('Hazard ahead: buzz ' + $('dside').selectedOptions[0].text); };
 $('ka').onchange = () => send('awake?on=' + ($('ka').checked ? 1 : 0));
 function tryE(who) { send('play?u=' + who + '&e=' + $('te').value); }
 
@@ -317,6 +374,7 @@ function live(p, u) {        // awake data for one shoe
   $(p + 'int').textContent = u.si ? (u.si / 1000).toFixed(2) + ' s between steps' : '';
   if (lastSteps[p] !== null && u.steps > lastSteps[p]) { $(p + 'steps').classList.add('flash'); setTimeout(() => $(p + 'steps').classList.remove('flash'), 200); }
   lastSteps[p] = u.steps;
+  detSteps(p, u.steps);
   // IMU tab
   const [ax, ay, az] = u.a, [gx, gy, gz] = u.g;
   $(p+'btn').textContent = u.btn ? 'PRESSED' : 'up';
@@ -357,6 +415,7 @@ function render(j) {
   const [active, dist] = j.ap;
   $('dist').textContent = active ? dist.toFixed(2) + ' m' : (dist === 0 && j.al ? 'arrived' : 'not running');
   $('aplast').textContent = j.al || '';
+  detShoe(j);
   drawCard('L'); drawCard('R');
 }
 
@@ -426,5 +485,204 @@ async function lockScreen() {
 }
 $('wl').onchange = lockScreen;
 document.addEventListener('visibilitychange', () => { if (document.visibilityState == 'visible' && $('wl').checked) lockScreen(); });
+
+// ---------------- simulated detector ----------------
+// Pretends to be a step sensor: knows where a step is, works out how far away it is as the shoes report steps,
+// and sends the right shoe a hazard message 5 times a second (format in software_plan.md):
+//   haz?n=<seq>&t=<U up|D drop|O other|C clear|X stopping>&s=<L|C|R>&d=<m>&h=<m>&c=<0-1>
+const DET = {range: 4.0, rate: 5, noise: 0.03};
+const SCEN = {
+  up:      {t: 'U', s: 'C', h: 0.17, c: 0.92, name: 'step up ahead'},
+  drop:    {t: 'D', s: 'C', h: -0.17, c: 0.92, name: 'drop ahead'},
+  left:    {t: 'U', s: 'L', h: 0.17, c: 0.90, name: 'step up on the left'},
+  right:   {t: 'U', s: 'R', h: 0.17, c: 0.90, name: 'step up on the right'},
+  dropout: {t: 'U', s: 'C', h: 0.17, c: 0.92, name: 'detector drop-out', outAt: 1.3, outFor: 3000},
+  lowconf: {t: 'U', s: 'C', h: 0.17, c: 0.30, name: 'low-confidence detection'},
+};
+const det = {on: false, sc: SCEN.up, start: 5, walked: 0, seq: 0, timer: null, pending: false, outUntil: 0, outDone: false,
+             done: false, last: '', hz: null, al: '', fake: 0, lastSteps: {L: null, R: null},
+             stepAt: {L: 0, R: 0}, buzzAt: {L: 0, R: 0}};
+const stepLen = () => Number($('sl').value) || 0.65;
+const trueDist = () => det.start - det.walked * stepLen();
+
+function detSteps(p, n) {          // each shoe's step count, from the polled state
+  const last = det.lastSteps[p]; det.lastSteps[p] = n;
+  if (last == null || n <= last) return;          // first reading, or the count was reset
+  det.stepAt[p] = Date.now();
+  if (det.on) det.walked += n - last;
+}
+function detShoe(j) {              // what the shoe says back
+  det.hz = j.hz || null;
+  if (!j.al || j.al == det.al) return;
+  const first = det.al === ''; det.al = j.al;
+  if (first || !det.on) return;
+  log('Shoe: ' + j.al);
+  const m = j.al.match(/ on ([LRB])$/), dm = j.al.match(/ ([UDO]) ([\d.]+) m, effect/);
+  const type = dm ? dm[1] : j.hz ? j.hz[1] : det.sc.t, side = j.hz ? j.hz[2] : det.sc.s;
+  if (dm) announce(level(Number(dm[2])), type, side, m ? m[1] : 'B');
+  else if (/both buzz/.test(j.al)) announce('arrive', /drop/.test(j.al) ? 'D' : 'U', side, 'B');
+  else if (/detector lost/.test(j.al)) announce('lost', '', '', 'B');
+  else if (/detector back|detector stopped/.test(j.al)) det.said = '';
+  if (m) flashBuzz(m[1]); else if (/both buzz|detector lost/.test(j.al)) flashBuzz('B');
+}
+// ---- sound: a demo aid so people watching can hear what the shoes are doing (not part of the product) ----
+const zone = () => Number($('az').value) || 1.5;
+const level = d => d <= 0.01 ? 'arrive' : d > 1.0 ? 'far' : d > 0.5 ? 'mid' : 'near';
+const WORD = {U: 'Step up', D: 'Step down', O: 'Obstacle'}, WHERE = {L: ' on the left', R: ' on the right', C: ' ahead'};
+function announce(lvl, type, side, foot) {   // lvl: far / mid / near / arrive / lost; foot = which shoe buzzed
+  const mode = $('sound').value;
+  if (mode == 'beep' || mode == 'both') beep(type == 'D' && lvl != 'arrive' && lvl != 'lost' ? 'drop' : lvl, foot);
+  if ((mode == 'voice' || mode == 'both') && lvl + type + side != det.said) {
+    det.said = lvl + type + side;              // only speak when something changes, or it talks over itself every step
+    const w = WORD[type] || 'Hazard';
+    say(lvl == 'lost' ? 'Detector lost' : lvl == 'arrive' ? w + ' now' :
+        lvl == 'far' ? w + (WHERE[side] || '') : lvl == 'mid' ? 'One metre' : 'Close');
+  }
+}
+function say(text) {
+  if (!window.speechSynthesis) return;
+  speechSynthesis.cancel();                  // drop anything stale
+  const u = new SpeechSynthesisUtterance(text); u.rate = 1.2;
+  speechSynthesis.speak(u);
+}
+let actx = null;
+function audioOn() {               // browsers only allow audio after a click, so this runs from Start
+  try { actx = actx || new AudioContext(); actx.resume(); } catch (e) { actx = null; }
+}
+function tone(t0, f0, f1, len, pan, vol) {
+  const o = actx.createOscillator(), g = actx.createGain(), p = actx.createStereoPanner();
+  o.frequency.setValueAtTime(f0, t0); o.frequency.linearRampToValueAtTime(f1, t0 + len);
+  g.gain.setValueAtTime(0, t0); g.gain.linearRampToValueAtTime(vol || 0.3, t0 + 0.01);
+  g.gain.setValueAtTime(vol || 0.3, t0 + len - 0.02); g.gain.linearRampToValueAtTime(0, t0 + len);
+  p.pan.value = pan; o.connect(g).connect(p).connect(actx.destination);
+  o.start(t0); o.stop(t0 + len + 0.01);
+}
+function beep(kind, side) {        // kind: far / mid / near / arrive / drop / lost; side: L / R / B
+  if (!actx) return;
+  const pan = side == 'L' ? -1 : side == 'R' ? 1 : 0, t = actx.currentTime + 0.01;
+  const n = {far: 1, mid: 2, near: 3}[kind];
+  if (n) for (let i = 0; i < n; i++) tone(t + i * 0.12, 880, 880, 0.07, pan, kind == 'far' ? 0.15 : 0.3);
+  else if (kind == 'arrive') tone(t, 1320, 1320, 0.6, pan);
+  else if (kind == 'drop') for (let i = 0; i < 4; i++) tone(t + i * 0.09, 440, 440, 0.05, pan);
+  else if (kind == 'lost') tone(t, 900, 250, 0.8, pan);
+}
+function flashBuzz(w) { const t = Date.now(); if (w != 'R') det.buzzAt.L = t; if (w != 'L') det.buzzAt.R = t; }
+
+function sendFast(text) {          // no reply needed; skip a tick rather than queue up behind a slow read
+  if (!connected || det.pending) return false;
+  det.pending = true;
+  gatt(() => ch.cmd.writeValueWithoutResponse(enc.encode(text))).catch(e => console.log('det', e)).finally(() => det.pending = false);
+  return true;
+}
+function detTick() {
+  if (!det.on) return;
+  const sc = det.sc, d = trueDist(), t = Date.now();
+  if (sc.outAt && !det.outDone && d <= sc.outAt) {
+    det.outDone = true; det.outUntil = t + sc.outFor;
+    log('Detector: going silent for ' + sc.outFor / 1000 + ' s (simulated fault)');
+    if ($('practice').checked) setTimeout(() => det.on && announce('lost', '', '', 'B'), 1000);   // what the shoes would do
+  }
+  if (t < det.outUntil) { det.last = '(silent - simulated fault)'; return; }
+  if (d <= 0.01 && !det.done) { det.done = true; log('Detector: walker reached the ' + (sc.t == 'D' ? 'drop' : 'step') + ', now sending clear'); }
+  const n = det.seq + 1;
+  const msg = d > DET.range || d <= 0.01 ? 'haz?n=' + n + '&t=C' :
+    'haz?n=' + n + '&t=' + sc.t + '&s=' + sc.s + '&d=' + Math.max(0, d + (Math.random() * 2 - 1) * DET.noise).toFixed(2) +
+    '&h=' + sc.h.toFixed(2) + '&c=' + sc.c.toFixed(2);
+  if (sendFast(msg) || !connected) { det.seq = n; det.last = msg + (connected ? '' : '  (not sent - no shoes)'); }
+}
+function detStart() {
+  audioOn();
+  det.sc = SCEN[$('scen').value]; det.start = Number($('dstart').value) || 5;
+  Object.assign(det, {on: true, walked: 0, outUntil: 0, outDone: false, done: false, pracArr: false, said: ''});
+  if (connected) {
+    send('config?mode=4');
+    document.querySelector('input[name=mode][value="4"]').checked = true;
+    send('haz?n=' + (++det.seq) + '&t=X');         // clear anything the shoe still remembers
+  }
+  clearInterval(det.timer); det.timer = setInterval(detTick, 1000 / DET.rate);
+  log('Detector: started "' + det.sc.name + '", ' + det.start + ' m away');
+}
+function detStop() {
+  if (!det.on) return;
+  det.on = false; clearInterval(det.timer);
+  send('haz?n=' + (++det.seq) + '&t=X');           // tell the shoe we stopped on purpose (no "lost" alert)
+  log('Detector: stopped');
+}
+// practice without shoes: fake steps, and copy the shoe's rules here so the buzz rings still show
+setInterval(() => {
+  if (!det.on || !$('practice').checked) return;
+  const f = det.fake++ % 2 ? 'R' : 'L', sc = det.sc;
+  det.walked++; det.stepAt[f] = Date.now();
+  const d = trueDist();
+  if (Date.now() < det.outUntil || sc.c < 0.5 || d > zone()) return;
+  if (d <= 0.01) { if (det.pracArr) return; det.pracArr = true; }   // shoes only buzz once on arrival
+  const sb = Number($('sb').value), both = (sb == 1 && d <= 0.5) || (sb == 2 && d <= 1.0);
+  const w = d <= 0.01 ? 'B' : sc.s == 'C' ? ($('dside').value == 3 ? 'B' : f) : both ? 'B' : sc.s;
+  flashBuzz(w);
+  announce(level(d), sc.t, sc.s, w);
+}, 600);
+
+// ---- top-down view: you at the bottom, the path ahead going up the screen ----
+const V = {x0: 30, x1: 270, toe: 352, px: 64};    // px per metre
+const vy = m => V.toe - m * V.px;                    // distance ahead of the toes -> y
+function svgText(x, y, t, fill, size, anchor) {
+  return '<text x="' + x + '" y="' + y + '" fill="' + fill + '" font-size="' + (size || 11) + '" text-anchor="' + (anchor || 'start') +
+         '" font-family="sans-serif">' + t + '</text>';
+}
+function drawWorld() {
+  requestAnimationFrame(drawWorld);
+  if ($('p4').style.display == 'none') return;
+  const t = Date.now(), sc = det.sc, d = trueDist(), hz = det.hz;
+  let g = '<rect x="' + V.x0 + '" y="0" width="' + (V.x1 - V.x0) + '" height="430" fill="#161616"/>';
+  for (const x of [110, 190]) g += '<line x1="' + x + '" y1="0" x2="' + x + '" y2="430" stroke="#2a2a2a" stroke-dasharray="6 6"/>';
+  // detector field of view and range
+  g += '<polygon points="150,' + vy(0) + ' ' + V.x0 + ',' + vy(DET.range) + ' ' + V.x1 + ',' + vy(DET.range) + '" fill="#2a5" fill-opacity="0.05"/>';
+  g += '<line x1="' + V.x0 + '" y1="' + vy(DET.range) + '" x2="' + V.x1 + '" y2="' + vy(DET.range) + '" stroke="#2a5" stroke-opacity="0.5" stroke-dasharray="4 4"/>';
+  g += svgText(V.x1 - 2, vy(DET.range) - 4, 'detector range ' + DET.range + ' m', '#2a5', 10, 'end');
+  // alert zones
+  [[zone(), 1.0, '#e8c040', 0.10], [1.0, 0.5, '#f08a30', 0.15], [0.5, 0, '#e04040', 0.20]].forEach(([a, b, c, o]) => {
+    g += '<rect x="' + V.x0 + '" y="' + vy(a) + '" width="' + (V.x1 - V.x0) + '" height="' + (vy(b) - vy(a)) + '" fill="' + c + '" fill-opacity="' + o + '"/>';
+    g += svgText(V.x1 + 3, vy(a) + 4, a.toFixed(1) + ' m', c, 10);
+  });
+  g += svgText(V.x1 + 3, vy(0) + 4, '0', '#888', 10);
+  // the hazard
+  if (det.on || det.done) {
+    const lane = sc.s == 'L' ? [V.x0, 110] : sc.s == 'R' ? [190, V.x1] : [V.x0, V.x1];
+    const yy = vy(Math.max(d, -0.4)), up = sc.t == 'U', col = up ? '#3b8bff' : '#ff5fa2';
+    const seen = d <= DET.range && t >= det.outUntil;
+    const op = sc.c < 0.5 ? 0.25 + 0.25 * Math.abs(Math.sin(t / 120)) : seen ? 1 : 0.35;
+    g += '<rect x="' + lane[0] + '" y="' + (yy - 16) + '" width="' + (lane[1] - lane[0]) + '" height="16" fill="' + col + '" fill-opacity="' + op +
+         '"' + (sc.c < 0.5 ? ' stroke="' + col + '" stroke-dasharray="3 3"' : '') + '/>';
+    const lbl = (up ? '▲ ' : '▼ ') + Math.round(Math.abs(sc.h) * 100) + ' cm ' + (up ? 'step up' : 'drop') + ' · ' + Math.max(d, 0).toFixed(2) + ' m' +
+                (d > DET.range ? ' (not seen yet)' : sc.c < 0.5 ? ' (unsure)' : '');
+    g += svgText((lane[0] + lane[1]) / 2, yy - 21, lbl, col, 11, 'middle');
+  }
+  // where the shoe thinks it is (dead-reckoned between messages)
+  if (hz && hz[0] && det.on) {
+    const ye = vy(Math.max(hz[3], -0.4));
+    g += '<line x1="' + V.x0 + '" y1="' + ye + '" x2="' + V.x1 + '" y2="' + ye + '" stroke="#fff" stroke-opacity="0.7" stroke-dasharray="2 3"/>';
+    g += svgText(V.x0 + 3, ye + 12, 'shoe estimate ' + hz[3].toFixed(2) + ' m', '#ddd', 10);
+  }
+  // feet: green when they step, orange ring when they buzz
+  for (const [p, cx] of [['L', 132], ['R', 168]]) {
+    const stepped = t - det.stepAt[p] < 300, buzz = t - det.buzzAt[p];
+    if (buzz < 600) g += '<ellipse cx="' + cx + '" cy="' + (V.toe + 24) + '" rx="' + (15 + buzz / 40) + '" ry="' + (28 + buzz / 40) +
+                         '" fill="none" stroke="#fa4" stroke-width="3" stroke-opacity="' + (1 - buzz / 600) + '"/>';
+    g += '<ellipse cx="' + cx + '" cy="' + (V.toe + 24) + '" rx="11" ry="23" fill="' + (stepped ? '#2a5' : '#3a3a3a') + '" stroke="#777"/>';
+    g += svgText(cx, V.toe + 66, p, '#aaa', 12, 'middle');
+  }
+  // banners
+  if (hz && hz[6]) g += '<rect x="40" y="150" width="220" height="40" rx="6" fill="#c33"/>' + svgText(150, 176, 'DETECTOR LOST', '#fff', 18, 'middle');
+  else if (det.on && t < det.outUntil) g += svgText(150, 170, 'detector silent...', '#f55', 14, 'middle');
+  if (det.on && d > DET.range) g += svgText(150, 20, 'nothing in range - sending "clear"', '#888', 11, 'middle');
+  if (det.done) g += svgText(150, 20, 'reached the ' + (sc.t == 'D' ? 'drop' : 'step') + ' - press Stop', '#2a5', 12, 'middle');
+  if (!det.on && !det.done) g += svgText(150, 20, 'pick a scenario and press Start', '#888', 12, 'middle');
+  $('world').innerHTML = g;
+  $('detline').textContent = det.on ? 'sent: ' + det.last : '';
+  $('shoeline').textContent = !connected ? 'shoe: not connected' : !hz ? 'shoe: not in Detector mode' :
+    'shoe: ' + (hz[0] ? hz[1] + ' ' + hz[2] + ' est ' + hz[3].toFixed(2) + ' m, ' + hz[4] + ' steps since msg' : 'no hazard') +
+    ' · last msg ' + (hz[5] < 0 ? '-' : hz[5] + ' ms') + ' ago · missed ' + hz[7] + ' · ignored ' + hz[8] + (hz[6] ? ' · LOST' : '');
+}
+requestAnimationFrame(drawWorld);
 </script>
 </body></html>
