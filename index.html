@@ -115,7 +115,10 @@ label{display:block;margin:6px 0;font-size:17px}
 <label><input type="radio" name="ol" value="1"> Open loop - fixed frequency</label>
 <div>Frequency <input id="of" type="number" min="140" max="210" step="5"> Hz <span class="dim">(VG2080001 is rated 175 Hz)</span></div>
 <div class="dim">Open loop drives at about the motor's rated 1.8 V rms. Use "Try an effect" to compare.</div>
-<div><b>Motor calibration</b>: <span id="mcal" class="mono">-</span></div>
+<div><b>Motor calibration</b></div><pre id="mcal" class="mono" style="white-space:pre-wrap;margin:2px 0">-</pre>
+<div>Rated voltage <input id="mcrv" type="number" min="20" max="255" value="101" style="width:4.5em">
+ drive time <input id="mcdt" type="number" min="5" max="31" value="24" style="width:4em">
+ <span class="dim">(101 / 24 = my first estimate for 1.8 V rms, 175 Hz; try 75 if it fails)</span></div>
 <button onclick="motorCal(0)">Calibrate motors</button><button onclick="motorCal(1)">Clear (back to driver defaults)</button>
 <div class="dim">Runs the driver's auto-calibration for this motor (1.8 V rms, 175 Hz): each shoe buzzes for about a second.
 Do it with the units in the shoes, ideally worn, as that is how they'll be used. Kept through power-off. Effects will feel
@@ -476,7 +479,8 @@ function parse(csv) {
   return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
           t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19],
           sl: v[20], mw: v[21], bw: v[22], ts: v[23],
-          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28], ni: v[29], hz: v[30], cal: v[31], cc: v[32], cb: v[33], cg: v[34]};   // step diagnostics (newer firmware only)
+          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28], ni: v[29], hz: v[30], cal: v[31], cc: v[32], cb: v[33], cg: v[34],
+          cs: v[35], cms: v[36], crv: v[37], cdt: v[38]};   // last calibration attempt (only sent after one)   // step diagnostics (newer firmware only)
 }
 const lastSteps = {L: null, R: null}, prev = {L: null, R: null};
 function live(p, u) {        // awake data for one shoe
@@ -639,16 +643,25 @@ function detSteps(p, n) {          // each shoe's step count, from the polled st
 const calTxt = {L: '?', R: '?'};
 function calShow(p, u) {
   if (u.cal == null || isNaN(u.cal)) return;
-  const t = u.cal == 1 ? 'calibrated (comp ' + u.cc + ', bemf ' + u.cb + ', gain ' + u.cg + ')' : u.cal == 2 ? 'FAILED - using ' + (u.cc ? 'previous' : 'defaults') : 'not calibrated (defaults)';
+  let t = u.cal == 1 ? 'calibrated (comp ' + u.cc + ', bemf ' + u.cb + ', gain ' + u.cg + ')' :
+          u.cal == 2 ? 'FAILED: chip says calibration failed' : u.cal == 3 ? 'FAILED: timed out (still running after 3 s)' : 'not calibrated (defaults)';
+  if (u.cms != null && !isNaN(u.cms)) {
+    const why = [];
+    if (u.cs & 0x08) why.push('DIAG_RESULT set');
+    if (u.cs & 0x02) why.push('over-temperature');
+    if (u.cs & 0x01) why.push('over-current');
+    t += ' [last try: ' + u.cms + ' ms, status 0x' + u.cs.toString(16).padStart(2, '0') + (why.length ? ' = ' + why.join(', ') : '') +
+         ', rated ' + u.crv + ', drive time ' + u.cdt + ']';
+  }
   if (t != calTxt[p] && calTxt[p] != '?') log(SIDES[p] + ' motor: ' + t);
   calTxt[p] = t;
-  $('mcal').textContent = 'L ' + calTxt.L + ' · R ' + calTxt.R;
+  $('mcal').textContent = 'L ' + calTxt.L + '\nR ' + calTxt.R;
 }
 function motorCal(clear) {
   if (!connected) return;
   if (!clear && !confirm('Both shoes will buzz for about a second each. Units in the shoes?')) return;
-  send('motorcal?u=B' + (clear ? '&clear=1' : ''));
-  log(clear ? 'Motor calibration cleared (driver defaults)' : 'Motor calibration started');
+  send('motorcal?u=B' + (clear ? '&clear=1' : '&rv=' + $('mcrv').value + '&dt=' + $('mcdt').value));
+  log(clear ? 'Motor calibration cleared (driver defaults)' : 'Motor calibration started (rated ' + $('mcrv').value + ', drive time ' + $('mcdt').value + ')');
 }
 const lraHz = {L: null, R: null};
 function lraShow(p, hz) {
