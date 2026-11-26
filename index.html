@@ -181,7 +181,7 @@ swing threshold but wasn't counted: too weak, or not over the threshold for long
 
 <div class="box"><b>Detection settings</b> <span class="dim">(both shoes, saved on the shoes)</span>
 <table>
-<tr><td>Rotation counted</td><td><select id="sm"><option value="0">all rotation (original)</option><option value="1">ignore turning on the spot</option></select></td></tr>
+<tr><td>Rotation counted</td><td><select id="sm"><option value="1" selected>ignore turning on the spot (default)</option><option value="0">all rotation (original, 29 Oct)</option></select></td></tr>
 <tr><td>Swing faster than</td><td><input id="sw" type="number" step="10" min="50" max="500" value="150" style="width:5em"> deg/s</td></tr>
 <tr><td>... for at least</td><td><input id="swm" type="number" step="10" min="20" max="300" value="100" style="width:5em"> ms</td></tr>
 <tr><td>Then foot flat: slower than</td><td><input id="st" type="number" step="5" min="5" max="150" value="40" style="width:5em"> deg/s</td></tr>
@@ -191,11 +191,13 @@ swing threshold but wasn't counted: too weak, or not over the threshold for long
 </table>
 <div id="smwarn" style="color:#e8c040"></div>
 <div class="dim">"Ignore turning" drops rotation about the vertical (pivoting, turning on the spot) and keeps the forward swing.
-It needs "Set level" done on that shoe (IMU tab, shoe flat and still); without it the shoe uses all rotation.
+It needs the shoe's level: press "Set level" once with the shoes flat and still (IMU tab) and it is kept through power-off.
+Without it the shoe uses all rotation.
 "Landing" rejects swings with no impact when the foot comes down; these show as near misses.</div>
-<button onclick="stDefaults()">Back to original settings</button>
-<div class="dim">Original settings (from the 29 Oct walk with the bare board): all rotation, 150 deg/s for 100 ms, then below
-40 deg/s and within 0.15 g for 80 ms, no landing check.</div>
+<button onclick="stDefaults()">Back to defaults</button>
+<div class="dim">Defaults: ignore turning, 150 deg/s for 100 ms, then below 40 deg/s and within 0.15 g for 80 ms, no landing check.
+Chosen from the 26 Nov recording: turning on the spot counted 22 steps with all rotation, 1 with turning ignored, and no
+walking steps were lost. Thresholds are from the 29 Oct walk.</div>
 </div>
 
 <div class="box"><b>Step list</b> <button onclick="stSave()">save CSV</button> <button onclick="stClear()">clear</button>
@@ -407,7 +409,7 @@ document.querySelectorAll('input[name=mode]').forEach(e => e.onchange = () => se
 ['se','sd','sl','side','ef','em','en','ea','ed'].forEach(k => $(k).onchange = () => send('config?' + k + '=' + $(k).value));
 document.querySelectorAll('input[name=ol]').forEach(e => e.onchange = () => { send('config?ol=' + e.value); log('Motor drive: ' + (e.value == 1 ? 'open loop ' + $('of').value + ' Hz' : 'closed loop')); });
 $('of').onchange = () => send('config?of=' + $('of').value);
-const ST_KEYS = ['sm', 'sw', 'swm', 'st', 'stg', 'stm', 'si'], ST_DEF = {sm: 0, sw: 150, swm: 100, st: 40, stg: 0.15, stm: 80, si: 0};
+const ST_KEYS = ['sm', 'sw', 'swm', 'st', 'stg', 'stm', 'si'], ST_DEF = {sm: 1, sw: 150, swm: 100, st: 40, stg: 0.15, stm: 80, si: 0};
 ST_KEYS.forEach(k => $(k).onchange = () => { send('config?' + k + '=' + $(k).value); log('Step detection: ' + stDesc()); });
 const stDesc = () => ($('sm').value == 1 ? 'ignore turning, ' : 'all rotation, ') + 'swing > ' + $('sw').value + ' deg/s for ' + $('swm').value + ' ms, flat < ' + $('st').value +
   ' deg/s within ' + $('stg').value + ' g for ' + $('stm').value + ' ms' +
@@ -415,7 +417,7 @@ const stDesc = () => ($('sm').value == 1 ? 'ignore turning, ' : 'all rotation, '
 function stDefaults() {
   ST_KEYS.forEach(k => $(k).value = ST_DEF[k]);
   send('config?' + ST_KEYS.map(k => k + '=' + ST_DEF[k]).join('&'));
-  log('Step detection back to original: ' + stDesc());
+  log('Step detection back to defaults: ' + stDesc());
 }
 $('az').onchange = () => { send('config?az=' + $('az').value); log('Alerts start at ' + $('az').value + ' m'); };
 $('sb').onchange = () => { send('config?sb=' + $('sb').value); log('Side hazards: ' + $('sb').selectedOptions[0].text); };
