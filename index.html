@@ -115,6 +115,11 @@ label{display:block;margin:6px 0;font-size:17px}
 <label><input type="radio" name="ol" value="1"> Open loop - fixed frequency</label>
 <div>Frequency <input id="of" type="number" min="140" max="210" step="5"> Hz <span class="dim">(VG2080001 is rated 175 Hz)</span></div>
 <div class="dim">Open loop drives at about the motor's rated 1.8 V rms. Use "Try an effect" to compare.</div>
+<div><b>Motor calibration</b>: <span id="mcal" class="mono">-</span></div>
+<button onclick="motorCal(0)">Calibrate motors</button><button onclick="motorCal(1)">Clear (back to driver defaults)</button>
+<div class="dim">Runs the driver's auto-calibration for this motor (1.8 V rms, 175 Hz): each shoe buzzes for about a second.
+Do it with the units in the shoes, ideally worn, as that is how they'll be used. Kept through power-off. Effects will feel
+stronger afterwards (the driver defaults are about 1.1 V rms). If it feels worse, press Clear.</div>
 <div>Frequency locked to (closed loop): <span id="lrahz" class="mono">-</span></div>
 <div class="dim">Measured by the driver while it plays, so it updates after each buzz. Use a long effect (e.g. 47 Buzz 100% or
 15 Alert 750 ms) for a settled reading; short clicks may not lock. Rated 175 Hz. In open loop it shows the last closed-loop value.</div>
@@ -471,7 +476,7 @@ function parse(csv) {
   return {btn: v[0], vbat: v[1], pct: v[2], a: v.slice(3, 6), g: v.slice(6, 9), pg: v[9], mna: v[10], mxa: v[11],
           t: v[12], lv: v[13], tl: v[14], ty: v[15], tz: v[16], steps: v[17], si: v[18], ms: v[19],
           sl: v[20], mw: v[21], bw: v[22], ts: v[23],
-          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28], ni: v[29], hz: v[30]};   // step diagnostics (newer firmware only)
+          pk: v[24], sws: v[25], nm: v[26], np: v[27], na: v[28], ni: v[29], hz: v[30], cal: v[31], cc: v[32], cb: v[33], cg: v[34]};   // step diagnostics (newer firmware only)
 }
 const lastSteps = {L: null, R: null}, prev = {L: null, R: null};
 function live(p, u) {        // awake data for one shoe
@@ -490,6 +495,7 @@ function live(p, u) {        // awake data for one shoe
   if (lastSteps[p] !== null && u.steps > lastSteps[p]) { $(p + 'steps').classList.add('flash'); setTimeout(() => $(p + 'steps').classList.remove('flash'), 200); }
   stepsTab(p, u);
   lraShow(p, u.hz);
+  calShow(p, u);
   lastSteps[p] = u.steps;
   detSteps(p, u.steps);
   // IMU tab
@@ -629,6 +635,20 @@ function detSteps(p, n) {          // each shoe's step count, from the polled st
   if (!add) return;
   det.stepAt[p] = Date.now();
   if (det.on) det.walked += add;
+}
+const calTxt = {L: '?', R: '?'};
+function calShow(p, u) {
+  if (u.cal == null || isNaN(u.cal)) return;
+  const t = u.cal == 1 ? 'calibrated (comp ' + u.cc + ', bemf ' + u.cb + ', gain ' + u.cg + ')' : u.cal == 2 ? 'FAILED - using ' + (u.cc ? 'previous' : 'defaults') : 'not calibrated (defaults)';
+  if (t != calTxt[p] && calTxt[p] != '?') log(SIDES[p] + ' motor: ' + t);
+  calTxt[p] = t;
+  $('mcal').textContent = 'L ' + calTxt.L + ' · R ' + calTxt.R;
+}
+function motorCal(clear) {
+  if (!connected) return;
+  if (!clear && !confirm('Both shoes will buzz for about a second each. Units in the shoes?')) return;
+  send('motorcal?u=B' + (clear ? '&clear=1' : ''));
+  log(clear ? 'Motor calibration cleared (driver defaults)' : 'Motor calibration started');
 }
 const lraHz = {L: null, R: null};
 function lraShow(p, hz) {
